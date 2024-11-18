@@ -40,7 +40,7 @@ def apply_mask(wvs: np.ndarray, mask_bounds: list) -> np.ndarray:
 def taper_spectrum(
     spectrum: np.ndarray, 
     taper: float, 
-    taper_errors: bool = False
+    taper_errors: bool = False,
     ) -> np.ndarray:
     """
     Taper the ends of a spectrum using a cosine envelope.
@@ -60,6 +60,10 @@ def taper_spectrum(
 
     flux = spectrum_[:, 1]
     flux_err = spectrum_[:, 2] if spectrum_.shape[1] > 1 else None
+
+    # taper from edges of mask if provided
+    idx0 = 0
+    idx1 = len(flux) - 1
 
     # identify ends to slice
     slice0 = slice(idx0, idx0 + int(taper*flux.size) + 1)
