@@ -98,7 +98,7 @@ def xcheck_spectra(
 
 
 def check_vbinned(
-    spec: np.ndarray, 
+    wvs: np.ndarray[float], 
     wv_tol: float = 1e-6
     ) -> bool:
     """
@@ -107,10 +107,21 @@ def check_vbinned(
 
     """
 
+    # check monotonic
+    if not np.all(wvs[1:] > wvs[:-1]):
+        raise ValueError("Wavelength scale is not monotonically increasing.")
+
     # find log coefficient + const. for scale
+    a = (np.log(wvs[-1]) - np.log(wvs[0])) / (wvs.size - 1)
+    b = np.log(wvs[0])
 
     # subtract actual scale from this
+    wvs_log = np.exp(a * np.arange(wvs.size) + b)
 
     # if deviations above wv_tol, return False
+    wv_dev = np.abs(wvs - wvs_log).max()
 
-    return True
+    if wv_dev > wv_tol:
+        return False
+    else:
+        return True
