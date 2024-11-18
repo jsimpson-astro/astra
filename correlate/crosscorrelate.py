@@ -1,6 +1,7 @@
 from astra.utils import apply_mask, calculate_vpx, taper_spectrum
 from astra.utils.helpers import dummy_pbar, xcheck_spectra, check_vbinned
 
+import warnings
 import numpy as np
 from tqdm.auto import tqdm
 from numba import njit
@@ -8,9 +9,11 @@ from numba.types import bool_
 
 
 c_ = 299792.458
-wv_tol = 1e-6
+# wv_tol = 1e-6
+
 
 #### backend functions ####
+
 
 @njit
 def xcor_standard_compute(
@@ -180,7 +183,6 @@ def xcor_standard(
     return max_loc, max_loc_err
 
 
-
 #### frontend ####
 
 
@@ -192,7 +194,8 @@ def xcorrelate(
     initial_shifts: list[int] | None = None, 
     taper: float = 0.,
     xcor_func: callable = xcor_standard,
-    progress: bool = True
+    progress: bool = True,
+    _skip_checks: bool = False
     ) -> (np.ndarray, np.ndarray):
 
     """
@@ -245,44 +248,51 @@ def xcorrelate(
         Two columns, one row per observed spectrum.
     
     """
+    if not _skip_checks:
+        # check spectra match
+        try:
+            obs_w_errors, templ_w_errors = xcheck_spectra(obs, [template])
+        except Exception as e:
+            msg = e.args[0].replace('spectra1', 'obs').replace('spectra2', 'template')
+            raise type(e)(msg, *e.args[1:])
+        
+        obs_wvs = obs[0][:, 0]
 
-    # check spectra match
-    try:
-        obs_w_errors, templ_w_errors = xcheck_spectra(obs, [template])
-    except Exception as e:
-        msg = e.args[0].replace('spectra1', 'obs').replace('spectra2', 'template')
-        raise type(e)(msg, *args[1:])
-    
-    obs_wvs = obs[0][:, 0]
-    
-    n_obs = len(obs)
-    n_shifts = shifts[1] - shifts[0] + 1
-    
-    # check shift tuple
-    if not (isinstance(shifts[0], (np.integer, int)) and isinstance(shifts[1], (np.integer, int))):
-        raise TypeError("shifts must be given as ints")
-    if not shifts[0] < shifts[1]:
-        raise ValueError(f"shifts[0] ({shifts[0]}) must be less than shifts[1] ({shifts[1]})")
+        if not check_vbinned(obs_wvs):
+            warnings.warn("Spectra not uniform in velocity space - results may be meaningless.", RuntimeWarning)
+        
+        n_obs = len(obs)
+        
+        # check shift tuple
+        if not (isinstance(shifts[0], (np.integer, int)) and isinstance(shifts[1], (np.integer, int))):
+            raise TypeError("shifts must be given as ints")
+        if not shifts[0] < shifts[1]:
+            raise ValueError(f"shifts[0] ({shifts[0]}) must be less than shifts[1] ({shifts[1]})")
 
-    # check initial shifts if provided, including bounds
-    if initial_shifts is not None:
-        if len(initial_shifts) != len(obs):
-            raise IndexError("initial_shifts must have the same length as obs.")
-        for initial_shift in initial_shifts:
-            if not isinstance(initial_shift, (np.integer, int)):
-                raise TypeError("initial_shifts must be given as ints")
-            if any(abs(s + initial_shift) > obs_wvs.size // 2 for s in shifts):
-                raise IndexError(f"shifts ({shifts}, {initial_shift}) out of bounds for wavelengths with size {obs_wvs.size}")
+        # check initial shifts if provided, including bounds
+        if initial_shifts is not None:
+            if len(initial_shifts) != len(obs):
+                raise IndexError("initial_shifts must have the same length as obs.")
+            for initial_shift in initial_shifts:
+                if not isinstance(initial_shift, (np.integer, int)):
+                    raise TypeError("initial_shifts must be given as ints")
+                if any(abs(s + initial_shift) > obs_wvs.size // 2 for s in shifts):
+                    raise IndexError(f"shifts ({shifts}, {initial_shift}) out of bounds for wavelengths with size {obs_wvs.size}")
 
-    # check taper
-    if taper > 1:
-        raise ValueError(f"taper fraction cannot exceed 1 (taper={taper})")
-    if taper > 0.5:
-        print(f"Warning: taper > 0.5 ({taper}), tapering will overlap in centre of spectra")
+        # check taper
+        if taper > 1:
+            raise ValueError(f"taper fraction cannot exceed 1 (taper={taper})")
+        if taper > 0.5:
+            warnings.warn(f"Warning: taper > 0.5 ({taper}), tapering will overlap in centre of spectra")
 
-    # check func
-    if not callable(xcor_func):
-        raise TypeError(f"xcor_func {xcor_func} is not callable.")
+        # check func
+        if not callable(xcor_func):
+            raise TypeError(f"xcor_func {xcor_func} is not callable.")
+    else:
+        obs_w_errors = True if obs[0].shape[1] > 2 else False
+        templ_w_errors = True if template.shape[1] > 2 else False
+        obs_wvs = obs[0][:, 0]
+        n_obs = len(obs)
 
     #### masking checks #####
     
@@ -305,6 +315,22 @@ def xcorrelate(
     if taper > 0.:
         obs_data = [taper_spectrum(s, taper) for s in obs]
         template_ = taper_spectrum(template, taper)
+    else:
+        obs_data = obs
+        template_ = template
+
+    if taper > 0.:
+        # clip to edges of mask, and scale taper so same % of spectrum cut
+        idx0, idx1 = mask_.argmax(), len(mask_) - mask_[::-1].argmax()
+        taper_scaled = taper * obs_wvs.size / (idx1 - idx0)
+
+        obs_data = [None] * n_obs
+        for i, s in enumerate(obs):
+            obs_data[i] = s.copy()
+            obs_data[i][idx0:idx1] = taper_spectrum(s[idx0:idx1], taper_scaled)
+
+        template_ = template.copy()
+        template_[idx0:idx1] = taper_spectrum(template_[idx0:idx1], taper_scaled)
     else:
         obs_data = obs
         template_ = template
@@ -423,13 +449,15 @@ def xcorrelate_multi(
         obs_w_errors, templ_w_errors = xcheck_spectra(obs, templates)
     except Exception as e:
         msg = e.args[0].replace('spectra1', 'obs').replace('spectra2', 'templates')
-        raise type(e)(msg, *args[1:])
+        raise type(e)(msg, *e.args[1:])
 
     obs_wvs = obs[0][:, 0]
+
+    if not check_vbinned(obs_wvs):
+        warnings.warn("Spectra not uniform in velocity space - results may be meaningless.", RuntimeWarning)
     
     n_obs = len(obs)
     n_templ = len(templates)
-    n_shifts = shifts[1] - shifts[0] + 1
     
     # check shift tuple
     if not (isinstance(shifts[0], (np.integer, int)) and isinstance(shifts[1], (np.integer, int))):
@@ -504,6 +532,7 @@ def xcorrelate_multi(
 
 
             # run xcorrelate individual template function, skip tapering and disable pbar
+            # do not run checks (already done here)
             xcor_result = xcorrelate(obs=obs_data, 
                                      template=template, 
                                      mask=mask_, 
@@ -511,7 +540,8 @@ def xcorrelate_multi(
                                      initial_shifts=initial_shifts, 
                                      taper=0, 
                                      xcor_func=xcor_func, 
-                                     progress=False)
+                                     progress=False,
+                                     _skip_checks=True)
 
             pbar.update(1)
 
