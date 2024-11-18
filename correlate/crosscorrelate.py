@@ -1,5 +1,5 @@
 from astra.utils import apply_mask, calculate_vpx, taper_spectrum
-from astra.utils.helpers import dummy_pbar
+from astra.utils.helpers import dummy_pbar, xcheck_spectra, check_vbinned
 
 import numpy as np
 from tqdm.auto import tqdm
@@ -185,14 +185,14 @@ def xcor_standard(
 
 
 def xcorrelate(
-    obs_spectra: list[np.ndarray[float]], 
+    obs: list[np.ndarray[float]], 
     template: np.ndarray[float], 
     mask: np.ndarray[bool] | list[float] | None = None,
     shifts: tuple[int, int] = (-10, 10), 
     initial_shifts: list[int] | None = None, 
     taper: float = 0.,
     xcor_func: callable = xcor_standard,
-    progress: bool = True,
+    progress: bool = True
     ) -> (np.ndarray, np.ndarray):
 
     """
@@ -206,7 +206,7 @@ def xcorrelate(
     Note that masking is also applied where fluxes == np.nan and where errors < 0.
 
     Parameters:
-    obs_spectra: list of np.ndarray
+    obs: list of np.ndarray
         List of arrays of observed spectra. 
         All spectra must have identical wavelength scales. Each spectrum should have two, 
         or optionally three columns: wavelength, flux, and flux error.
@@ -222,7 +222,7 @@ def xcorrelate(
     shifts: tuple of ints, length 2
         Tuple of pixel shifts, (negative, positive), where shifts[1] > shifts[0]
     initial_shifts: list of ints or None, default None
-        Initial pixel shifts for correlation. Must have the same length as obs_spectra.
+        Initial pixel shifts for correlation. Must have the same length as obs.
     taper: float, default 0.
         From 0 to 1, fraction to taper from ends of the flux of both observed spectra and template.
     xcor_func: callable, default xcor_standard
@@ -245,10 +245,17 @@ def xcorrelate(
         Two columns, one row per observed spectrum.
     
     """
-    # need first wvs to compare against template wvs, and check other inputs
-    obs_wvs = obs_spectra[0][:, 0]
+
+    # check spectra match
+    try:
+        obs_w_errors, templ_w_errors = xcheck_spectra(obs, [template])
+    except Exception as e:
+        msg = e.args[0].replace('spectra1', 'obs').replace('spectra2', 'template')
+        raise type(e)(msg, *args[1:])
     
-    n_obs = len(obs_spectra)
+    obs_wvs = obs[0][:, 0]
+    
+    n_obs = len(obs)
     n_shifts = shifts[1] - shifts[0] + 1
     
     # check shift tuple
@@ -259,8 +266,8 @@ def xcorrelate(
 
     # check initial shifts if provided, including bounds
     if initial_shifts is not None:
-        if len(initial_shifts) != len(obs_spectra):
-            raise IndexError("initial_shifts must have the same length as obs_spectra.")
+        if len(initial_shifts) != len(obs):
+            raise IndexError("initial_shifts must have the same length as obs.")
         for initial_shift in initial_shifts:
             if not isinstance(initial_shift, (np.integer, int)):
                 raise TypeError("initial_shifts must be given as ints")
@@ -276,29 +283,6 @@ def xcorrelate(
     # check func
     if not callable(xcor_func):
         raise TypeError(f"xcor_func {xcor_func} is not callable.")
-    
-    #### template checks ####
-
-    # check wavelength scales
-    wv_dev = np.abs(template[:, 0] - obs_wvs).max()
-    if wv_dev > wv_tol:
-        raise ValueError(f"template and obs_spectra wavelength scales deviate above tolerance ({wv_dev}>{wv_tol}).")
-
-    #### obs spectra checks ####
-
-    # check shapes are all identical, flag errors if all have at least 3 columns
-    obs_shapes = np.array([a.shape for a in obs_spectra])
-    wvs_unique, cols_unique = np.unique(obs_shapes[:, 0]), np.unique(obs_shapes[:, 1])
-    if wvs_unique.size != 1:
-        raise IndexError("obs_spectra do not all have the same number of points")
-    if cols_unique.min() < 2:
-        raise IndexError("obs_spectra do not all have at least two columns")
-    obs_have_errors = True if cols_unique.min() > 2 else False
-
-    # check wavelength scales
-    wv_dev = np.abs(np.array([a[:, 0] for a in obs_spectra]) - obs_wvs).max()
-    if wv_dev > wv_tol:
-        raise ValueError(f"obs_spectra wavelength scales deviate above tolerance ({wv_dev}>{wv_tol}).")
 
     #### masking checks #####
     
@@ -319,10 +303,10 @@ def xcorrelate(
     v_avg = calculate_vpx(obs_wvs)
 
     if taper > 0.:
-        obs_data = [taper_spectrum(s, taper) for s in obs_spectra]
+        obs_data = [taper_spectrum(s, taper) for s in obs]
         template_ = taper_spectrum(template, taper)
     else:
-        obs_data = obs_spectra
+        obs_data = obs
         template_ = template
 
     # disable progress bar if requested by replacing with dummy class that does nothing
@@ -342,11 +326,11 @@ def xcorrelate(
             initial_shift = initial_shifts[i_obs]
 
             obs_wvs, obs_flux = obs[:, 0], obs[:, 1]
-            obs_flux_err = obs[:, 2] if obs_have_errors else None
+            obs_flux_err = obs[:, 2] if obs_w_errors else None
 
             # mask out any nans
             obs_mask_ = (t_mask_ & ~np.isnan(obs_flux))
-            obs_mask_ = (obs_mask_ & (obs_flux_err >= 0)) if obs_have_errors else obs_mask_
+            obs_mask_ = (obs_mask_ & (obs_flux_err >= 0)) if obs_w_errors else obs_mask_
 
             # perform xcor
 
@@ -361,20 +345,20 @@ def xcorrelate(
 
             pbar.update(1)
 
-        xcor_result = np.hstack([rvs, rv_errs])
+        xcor_result = np.vstack([rvs, rv_errs]).T
                 
     return xcor_result
 
 
 def xcorrelate_multi(
-    obs_spectra: list[np.ndarray[float]], 
-    templ_spectra: list[np.ndarray[float]], 
+    obs: list[np.ndarray[float]], 
+    templates: list[np.ndarray[float]], 
     mask: np.ndarray[bool] | list[float] | None = None,
     shifts: tuple[int, int] = (-10, 10), 
     initial_shifts: list[int] | None = None, 
     taper: float = 0.,
     xcor_func: callable = xcor_standard,
-    progress: bool = True,
+    progress: bool = True
     ) -> list[np.ndarray]:
 
     """
@@ -388,12 +372,12 @@ def xcorrelate_multi(
     Note that masking is also applied where fluxes == np.nan and where errors < 0.
 
     Parameters:
-    obs_spectra: list of np.ndarray
+    obs: list of np.ndarray
         List of arrays of observed spectra. 
         All spectra must have identical wavelength scales. Each spectrum should have two, 
         or optionally three columns: wavelength, flux, and flux error.
         Additional columns will be ignored.
-    templ_spectra: list of np.ndarray
+    templates: list of np.ndarray
         List of arrays of template spectra. 
         All spectra must have identical wavelength scales, which match the observed spectra. 
         Each spectrum should have two columns: wavelength and flux.
@@ -405,7 +389,7 @@ def xcorrelate_multi(
     shifts: tuple of ints, length 2
         Tuple of pixel shifts, (negative, positive), where shifts[1] > shifts[0]
     initial_shifts: list of ints or None, default None
-        Initial pixel shifts for correlation. Must have the same length as obs_spectra.
+        Initial pixel shifts for correlation. Must have the same length as obs.
     taper: float, default 0.
         From 0 to 1, fraction to taper from ends of the flux of both observed and template spectra.
     xcor_func: callable, default xcor_standard
@@ -433,11 +417,18 @@ def xcorrelate_multi(
         over all observed spectra given.
     
     """
-    # need first wvs to compare against template wvs, and check other inputs
-    obs_wvs = obs_spectra[0][:, 0]
     
-    n_obs = len(obs_spectra)
-    n_templ = len(templ_spectra)
+    # check spectra match
+    try:
+        obs_w_errors, templ_w_errors = xcheck_spectra(obs, templates)
+    except Exception as e:
+        msg = e.args[0].replace('spectra1', 'obs').replace('spectra2', 'templates')
+        raise type(e)(msg, *args[1:])
+
+    obs_wvs = obs[0][:, 0]
+    
+    n_obs = len(obs)
+    n_templ = len(templates)
     n_shifts = shifts[1] - shifts[0] + 1
     
     # check shift tuple
@@ -448,8 +439,8 @@ def xcorrelate_multi(
 
     # check initial shifts if provided, including bounds
     if initial_shifts is not None:
-        if len(initial_shifts) != len(obs_spectra):
-            raise IndexError("initial_shifts must have the same length as obs_spectra.")
+        if len(initial_shifts) != len(obs):
+            raise IndexError("initial_shifts must have the same length as obs.")
         for initial_shift in initial_shifts:
             if not isinstance(initial_shift, (np.integer, int)):
                 raise TypeError("initial_shifts must be given as ints")
@@ -465,37 +456,6 @@ def xcorrelate_multi(
     # check func
     if not callable(xcor_func):
         raise TypeError(f"xcor_func {xcor_func} is not callable.")
-    
-    #### template checks ####
-
-    # check shapes
-    templ_shapes = np.array([a.shape for a in templ_spectra])
-    wvs_unique, cols_unique = np.unique(templ_shapes[:, 0]), np.unique(templ_shapes[:, 1])
-    if wvs_unique.size != 1:
-        raise IndexError("templ_spectra do not all have the same number of points.")
-    if cols_unique.min() < 2:
-        raise IndexError("templ_spectra do not all have at least two columns.")
-
-    # check wavelength scales
-    wv_dev = np.abs(np.array([a[:, 0] for a in templ_spectra]) - obs_wvs).max()
-    if wv_dev > wv_tol:
-        raise ValueError(f"templ_spectra and obs_spectra wavelength scales deviate above tolerance ({wv_dev}>{wv_tol}).")
-
-    #### obs spectra checks ####
-
-    # check shapes are all identical, flag errors if all have at least 3 columns
-    obs_shapes = np.array([a.shape for a in obs_spectra])
-    wvs_unique, cols_unique = np.unique(obs_shapes[:, 0]), np.unique(obs_shapes[:, 1])
-    if wvs_unique.size != 1:
-        raise IndexError("obs_spectra do not all have the same number of points")
-    if cols_unique.min() < 2:
-        raise IndexError("obs_spectra do not all have at least two columns")
-    obs_have_errors = True if cols_unique.min() > 2 else False
-
-    # check wavelength scales
-    wv_dev = np.abs(np.array([a[:, 0] for a in obs_spectra]) - obs_wvs).max()
-    if wv_dev > wv_tol:
-        raise ValueError(f"obs_spectra wavelength scales deviate above tolerance ({wv_dev}>{wv_tol}).")
 
     #### masking checks #####
     
@@ -516,11 +476,22 @@ def xcorrelate_multi(
     v_avg = calculate_vpx(obs_wvs)
 
     if taper > 0.:
-        obs_data = [taper_spectrum(s, taper) for s in obs_spectra]
-        templ_data = [taper_spectrum(s, taper) for s in templ_spectra]
+        # clip to edges of mask, and scale taper so same % of spectrum cut
+        idx0, idx1 = mask_.argmax(), len(mask_) - mask_[::-1].argmax()
+        taper_scaled = taper * obs_wvs.size / (idx1 - idx0)
+
+        obs_data = [None] * n_obs
+        for i, s in enumerate(obs):
+            obs_data[i] = s.copy()
+            obs_data[i][idx0:idx1] = taper_spectrum(s[idx0:idx1], taper_scaled)
+
+        templ_data = [None] * n_templ
+        for i, s in enumerate(templates):
+            templ_data[i] = s.copy()
+            templ_data[i][idx0:idx1] = taper_spectrum(s[idx0:idx1], taper_scaled)
     else:
-        obs_data = obs_spectra
-        templ_data = templ_spectra
+        obs_data = obs
+        templ_data = templates
 
     # disable progress bar if requested by replacing with dummy class that does nothing
     pbar_manager = tqdm if progress else dummy_pbar
@@ -533,7 +504,7 @@ def xcorrelate_multi(
 
 
             # run xcorrelate individual template function, skip tapering and disable pbar
-            xcor_result = xcorrelate(obs_spectra=obs_data, 
+            xcor_result = xcorrelate(obs=obs_data, 
                                      template=template, 
                                      mask=mask_, 
                                      shifts=shifts, 
