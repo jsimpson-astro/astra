@@ -1,7 +1,8 @@
 __all__ = [
     'apply_mask',
     'taper_spectrum',
-    'calculate_vpx'
+    'calculate_vpx',
+    'mask_interp'
     ]
 
 import numpy as np
@@ -96,3 +97,101 @@ def calculate_vpx(wvs: np.ndarray) -> float:
     return c_ * (np.exp(np.log(wvs.max()/wvs.min()) / (wvs.size-1) ) - 1)
 
 
+def _mask_interp(
+    flux: np.ndarray[float], 
+    mask: np.ndarray[bool]
+    ) -> np.ndarray[float]:
+    """
+    Linearly interpolate flux from edges of given mask.
+    Masked edges are set to the nearest unmasked value.
+
+    Parameters:
+    flux: np.ndarray
+        Fluxes of spectrum used for interpolation.
+    mask: np.ndarray of bool
+        Boolean array to interpolate over where False, same size as flux.
+
+    Returns:
+    flux_i: np.ndarray
+        Fluxes of spectrum with interpolation over masked regions, same size as flux.
+    
+    """
+    flux_i = flux.copy()
+    
+    # indices included in mask - so slice i:f+1
+    mask_diff = np.diff(mask.astype(np.int8))
+    mask_is = (np.r_[0, mask_diff] == -1).nonzero()[0]
+    mask_fs = (np.r_[mask_diff, 0] == 1).nonzero()[0]
+    # print(mask_is, mask_fs)
+
+    # must catch unbounded (or all True) cases
+    if mask_is.size != 0 and mask_fs.size != 0:
+        if mask_is[0] < mask_fs[0]:
+            # left edge is not masked, go i[0]:f[0], i[1]:f[1]
+            slices = [slice(i, f+1) for i, f in zip(mask_is[:-1], mask_fs)]
+        else:
+            # left edge is masked, go :f[0], i[0]:f[1] etc.
+            slices = [slice(None, mask_fs[0]+1)]
+            slices += [slice(i, f+1) for i, f in zip(mask_is[:-1], mask_fs[1:])]
+        
+        if mask_is[-1] < mask_fs[-1]:
+            # right edge is not masked, i[-1]:f[-1] should be fine
+            slices += [slice(mask_is[-1], mask_fs[-1]+1)]
+        else:
+            # right edge is masked, will have to use i[-1]:
+            slices += [slice(mask_is[-1], None)]
+    elif mask_is.size != mask_fs.size:
+        slices = [slice(mask_is[0], None) if mask_fs.size == 0 else slice(None, mask_fs[0]+1)]
+    else:
+        slices = []
+    
+    for sl in slices:
+        if sl.start and sl.stop:
+            # linear interpolation 
+            flux_i[sl] = np.linspace(flux[sl.start-1], flux[sl.stop], sl.stop - sl.start + 2)[1:-1]
+        else:
+            flux_i[sl] = flux[sl.start-1] if sl.start else flux[sl.stop]
+
+    return flux_i
+
+
+def mask_interp(
+    spectrum: np.ndarray[float], 
+    mask: np.ndarray[bool] | list[tuple[float, float]]
+    ) -> np.ndarray[float]:
+    """
+    Linearly interpolate flux from edges of given mask.
+    Masked edges are set to the nearest unmasked value.
+
+    Parameters:
+    spectrum: np.ndarray
+        Spectrum to interpolate over, first column wavelengths, second flux.
+    mask: np.ndarray of bool
+        Boolean array to interpolate over where False, same length as spectrum.
+
+    Returns:
+    spectrum_i: np.ndarray
+        Spectrum with interpolation over masked regions.
+    
+    """
+
+    if isinstance(mask, np.ndarray):
+        if mask.size != spectrum[:, 0].size:
+            raise IndexError("If mask is an array, it must match the number of points of the spectra.")
+        mask_ = mask
+    elif isinstance(mask, list):
+        mask_ = apply_mask(spectrum[:, 0], mask)
+    else:
+        raise TypeError(f"Invalid type for mask: {type(mask)}")
+
+    flux_i = _mask_interp(spectrum[:, 1], mask_)
+
+    spectrum_i = spectrum.copy()
+
+    spectrum_i[:, 1] = flux_i
+
+    # mask errors that have been interpolated
+    if spectrum.shape[1] > 2:
+        spectrum_i[:, 2][spectrum_i[:, 1] != spectrum[:, 1]] = np.nan
+
+    return spectrum_i
