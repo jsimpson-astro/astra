@@ -21,8 +21,7 @@ def optsub_standard(
     fwhm: float = 0.
     ) -> (float, float, float, int):
     """
-    Calculate the optimal factor for subtraction between two spectra using 
-    the same method as the F77 program molly.
+    Calculate the optimal factor for subtraction between two spectra.
     Optimal subtraction factor minimises the residuals in the equation:
     
     x1 - factor * x2 = residuals
@@ -106,7 +105,7 @@ def optsub(
     _skip_checks: bool = False,
     ) -> np.ndarray[float]:
     """
-    Perform optimal subtraction using the same F77 method as molly.
+    Perform optimal subtraction using the standard method.
     Optimal subtraction is performed for the given observed spectrum,
     iterating over all given template spectra.
     All spectra should be in the same wavelength scale, binned into
@@ -210,7 +209,7 @@ def optsub_multi(
     progress: bool = True,
     ) -> np.ndarray[float]:
     """
-    Perform optimal subtraction using the same F77 method as molly.
+    Perform optimal subtraction using the standard method.
     Optimal subtraction is performed for each observed spectrum,
     iterating over all given template spectra.
     All spectra should be in the same wavelength scale, binned into
