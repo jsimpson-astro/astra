@@ -288,7 +288,7 @@ def f77_optsub(wvs: np.ndarray,
     x1_err = flux1_err 
 
     dof = np.count_nonzero(mask)
-    weights = 1 / x1_err[mask]**2 if x1_err is not None else np.ones(ndof)
+    weights = 1 / x1_err[mask]**2 if x1_err is not None else np.ones(dof)
     
     if fwhm > 1:
         d = x1[mask] - x1_smoothed[mask]
