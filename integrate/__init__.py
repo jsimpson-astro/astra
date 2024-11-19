@@ -1,1 +1,1 @@
-from ._integrate import *
+from .methods import ew
