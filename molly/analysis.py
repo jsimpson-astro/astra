@@ -1,13 +1,16 @@
 from .utils import apply_mask, dummy_pbar
 from .core_nj import f77_xcor_nj
 from .core import f77_ew, f77_optsub, xcor_quad_max
+from astra.utils.helpers import deprecated_
 
 import numpy as np
 from tqdm.auto import tqdm
+import warnings
 
 c = 299792.458
 wv_tol = 1e-6
 
+@deprecated_("do_xcor is pending depreciation. Use astra.correlate.xcorrelate instead.")
 def do_xcor(obs_spectra: list, 
             templ_spectra: list, 
             mask: np.ndarray | list | None = None,
@@ -41,8 +44,8 @@ def do_xcor(obs_spectra: list,
         Each spectrum should have two columns: wavelength and flux.
         Additional columns will be ignored. It is assumed noise is dominated by observed spectra.
     mask: numpy.ndarray, list of tuples of floats, or None, default None
-        Wavelength mask, optional. If provided, can either be a boolean array the same size as 
-        the wavelengths of the observed and template spectra, or a list of 2-tuples defining 
+        Wavelength mask, optional. If provided, can either be a boolean array the same size as
+        the wavelengths of the observed and template spectra, or a list of 2-tuples defining
         upper and lower bounds to exclude.
     shifts: tuple of ints, length 2
         Tuple of pixel shifts, (negative, positive), where shifts[1] > shifts[0]
@@ -55,7 +58,7 @@ def do_xcor(obs_spectra: list,
         
         func(xcor: np.ndarray[shape (shifts[1] - shifts[0] + 1,]) -> max_loc: float, error: float
         
-        where 'xcor' is the individual cross-correlation result i.e. the value of the correlation at 
+        where 'xcor' is the individual cross-correlation result i.e. the value of the correlation at
         each shift, and 'max_loc' and 'error' are the calculated location of the maximum and its error.
     progress: bool, default True
         Controls display of tqdm progress bar, optional. False to disable
@@ -66,6 +69,7 @@ def do_xcor(obs_spectra: list,
         over all observed spectra given.
     
     """
+
     # need first wvs to compare against template wvs, and check other inputs
     obs_wvs = obs_spectra[0][:, 0] if isinstance(obs_spectra[0], np.ndarray) else np.loadtxt(obs_spectra[0], usecols=0)
     
@@ -249,6 +253,8 @@ def do_xcor(obs_spectra: list,
                 
     return xcor_results
 
+
+@deprecated_("do_ews is pending depreciation. Use astra.integrate.ew instead.")
 def do_ews(spectra: list,
            mask: np.ndarray | list | None = None,
            initial_shifts: list | None = None
@@ -372,8 +378,9 @@ def do_ews(spectra: list,
         ews[i_spec], ew_errors[i_spec] = ew, ew_error
                 
     return ews, ew_errors
-    
 
+
+@deprecated_("do_optsub is pending depreciation. Use astra.fitting.optsub instead.")
 def do_optsub(obs_spectra: list, 
               templ_spectra: list, 
               mask: np.ndarray | list | None = None, 
@@ -416,7 +423,8 @@ def do_optsub(obs_spectra: list,
         result over all template spectra given.
     
     """
-    
+    warnings.warn("do_optsub is pending depreciation, use astra.fitting.optsub or astra.fitting.optsub_multi.", DeprecationWarning)
+
     n_obs = len(obs_spectra)
     n_templ = len(templ_spectra)
 
