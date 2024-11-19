@@ -1,5 +1,27 @@
-import numpy as np
 from astra.utils.utils import apply_mask
+
+from typing_extensions import deprecated
+import numpy as np
+
+
+def deprecated_(*dep_args, **dep_kwargs):
+
+    def decorator(func):
+
+        stacklevel = dep_kwargs.get('stacklevel', 1)
+        func = deprecated(*dep_args, **dep_kwargs | dict(stacklevel=stacklevel + 1))(func)
+
+        def wrapper(*args, **kwargs):
+            return func(*args, **kwargs)
+
+        # get deprecation message, add to docs
+        msg = dep_args[0] if dep_args else dep_kwargs['msg']
+        newdoc = f"- {msg}" + '\n' + func.__doc__
+        wrapper.__doc__ = newdoc
+
+        return wrapper
+
+    return decorator
 
 
 class dummy_pbar():
