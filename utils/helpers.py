@@ -1,23 +1,30 @@
 import numpy as np
+from astra.utils.utils import apply_mask
+
 
 class dummy_pbar():
+
     """
     Placeholder for tqdm pbar that does nothing
     """
+
     def __init__(self, *args, **kwargs):
         pass
+
     def __enter__(self):
         return self
+
     def __exit__(self, *args):
         pass
+
     def update(self, num, *args, **kwargs):
         pass
 
 
 def check_spectra(
-    spectra: list[np.ndarray], 
+    spectra: list[np.ndarray],
     wv_tol: float = 1e-6
-    ) -> bool:
+) -> bool:
     """
     Check a list of spectra all match i.e.:
     - All have the same shapes
@@ -51,10 +58,10 @@ def check_spectra(
 
 
 def xcheck_spectra(
-    spectra1: list[np.ndarray], 
-    spectra2: list[np.ndarray], 
+    spectra1: list[np.ndarray],
+    spectra2: list[np.ndarray],
     wv_tol: float = 1e-6
-    ) -> (bool, bool):
+) -> (bool, bool):
     """
     Check two lists of spectra match i.e.:
     - All spectra within each list have the same shapes
@@ -72,14 +79,14 @@ def xcheck_spectra(
         spectra1_have_errs = check_spectra(spectra1, wv_tol=wv_tol)
     except Exception as e:
         msg = 'Error with spectra1: ' + e.args[0]
-        raise type(e)(msg, *args[1:])
+        raise type(e)(msg, *e.args[1:])
 
     # check spectra2 are consistent
     try:
         spectra2_have_errs = check_spectra(spectra2, wv_tol=wv_tol)
     except Exception as e:
         msg = 'Error with spectra2: ' + e.args[0]
-        raise type(e)(msg, *args[1:])
+        raise type(e)(msg, *e.args[1:])
 
     # check lengths are consistent between both
     len1 = spectra1[0].shape[0]
@@ -87,8 +94,7 @@ def xcheck_spectra(
     if len1 != len2:
         raise IndexError(f"Spectra have unequal lengths ({len1}, {len2}).")
 
-
-    # check wavelength deviation between the two 
+    # check wavelength deviation between the two
     wvs_1 = spectra1[0][:, 0]
     wv_dev = np.abs(np.array([a[:, 0] for a in spectra2]) - wvs_1).max()
     if wv_dev > wv_tol:
@@ -98,11 +104,11 @@ def xcheck_spectra(
 
 
 def check_vbinned(
-    wvs: np.ndarray[float], 
+    wvs: np.ndarray[float],
     wv_tol: float = 1e-6
-    ) -> bool:
+) -> bool:
     """
-    Check a spectrum's wavelength scale is logarithmic, 
+    Check a spectrum's wavelength scale is logarithmic,
     i.e. pixels are uniform in velocity space.
 
     """
@@ -125,3 +131,26 @@ def check_vbinned(
         return False
     else:
         return True
+
+
+def automask(
+    wvs: np.ndarray[float],
+    mask: np.ndarray[bool] | list[float] | None = None,
+) -> np.ndarray[bool]:
+    """
+    Automatic masking helper.
+    Returns a boolean mask matching the provided wavelengths.
+    Automatically applies any bounds if given, or generates a blank mask if None.
+
+    """
+
+    if mask is None:
+        return np.ones(wvs.shape, dtype=bool)
+    elif isinstance(mask, np.ndarray):
+        if mask.shape != wvs.shape:
+            raise IndexError("If mask is an array, it must match the number of points of the spectra.")
+        return mask.copy()
+    elif isinstance(mask, list):
+        return apply_mask(wvs, mask)
+    else:
+        return np.ones(wvs.size, dtype=bool)
