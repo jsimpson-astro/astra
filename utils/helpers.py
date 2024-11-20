@@ -1,5 +1,3 @@
-from astra.utils.utils import apply_mask
-
 from typing_extensions import deprecated
 import numpy as np
 
@@ -153,6 +151,35 @@ def check_vbinned(
         return False
     else:
         return True
+
+
+def apply_mask(wvs: np.ndarray, mask_bounds: list[tuple[float, float]]) -> np.ndarray[bool]:
+    """
+    Apply a list of mask bounds, containing tuples of upper and lower bounds,
+    to an array of wavelengths, returning a boolean mask of the same size.
+
+    Parameters:
+    wvs: np.ndarray
+        Wavelength array to mask
+    mask_bounds: list of tuples of 2 floats
+        List of tuples where each tuple is an upper and lower bound to
+        exclude. The order does not matter.
+
+    Returns:
+    mask: np.ndarray
+        Boolean array, same size as wvs. False where excluded by mask
+
+    """
+
+    mask = np.ones(wvs.size, dtype=bool)
+
+    for lb, ub in mask_bounds:
+        if lb > ub:
+            mask = mask & ~((wvs > ub) & (wvs < lb))
+        else:
+            mask = mask & ~((wvs > lb) & (wvs < ub))
+
+    return mask
 
 
 def automask(
