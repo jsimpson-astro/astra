@@ -199,7 +199,7 @@ def xcorrelate(
     xcor_func: callable = xcor_standard,
     progress: bool = True,
     _skip_checks: bool = False
-) -> (np.ndarray, np.ndarray):
+) -> np.ndarray:
     """
     Perform cross-correlation over a series of observed spectra,
     against the given template spectrum.
