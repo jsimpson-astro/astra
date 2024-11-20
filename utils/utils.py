@@ -2,10 +2,14 @@ __all__ = [
     'apply_mask',
     'taper_spectrum',
     'calculate_vpx',
-    'mask_interp'
+    'mask_interp',
+    'phase_average'
 ]
 
+from astra.utils.helpers import check_spectra
+
 import numpy as np
+import warnings
 
 c_ = 299792.458
 
@@ -196,3 +200,112 @@ def mask_interp(
         spectrum_i[:, 2][spectrum_i[:, 1] != spectrum[:, 1]] = np.nan
 
     return spectrum_i
+
+
+def phase_average(
+    spec: list[np.ndarray[float]],
+    phases: np.ndarray[float],
+    phase_bins: list[tuple[float, float]] | None = None,
+    width: float | None = None,
+    n_bins: int | None = None,
+) -> list[np.ndarray[float]]:
+    """
+    Phase-bin a list of spectra, i.e. average according to orbital phase.
+
+    Phase bins must be either provided explicitly, with argument `phase_bins`,
+    or specified by `width` and `n_bins`.
+
+    Parameters:
+    spec: list of np.ndarray
+        List of arrays of spectra to phase-average.
+        All spectra must have identical wavelength scales. Each spectrum should have two,
+        or optionally three columns: wavelength, flux, and flux error.
+        Additional columns will be ignored.
+    phases: np.ndarray
+        Orbital phases of each spectrum, same 1D array of same length as `spec`.
+        Will be clipped to between 0 and 1 if not done already.
+    phase_bins: list of 2-tuples of floats, optional
+        Phase bins to average in, as a list of tuples of (lower bound, upper bound).
+        This will override `width` and `n_bins` if they are set.
+    width: float, optional
+        Width of phase bins, such that a phase bin around a phase 'p' will be defined:
+
+            p - (width / 2) < phases < p + (width / 2)
+
+        Ignored if `phase_bins` set explicitly.
+    n_bins: int, optional
+        Number of phase bins. Ignored if `phase_bins` set explicitly.
+
+    Returns:
+    phase_averaged_spec: list of np.ndarray (or None)
+        List of phase-averaged spectra, one per phase bin.
+        If no spectra were found in a given phase bin, a warning will be given,
+        and'None' will be returned instead.
+
+    """
+    errors = check_spectra(spec)
+
+    # handle optional phase bins/widths + n_bins
+    if phase_bins is None:
+        if width is None or n_bins is None:
+            raise ValueError("`width` and `n_bins` must be provided if `phase_bins` not set.")
+        if width <= 0:
+            raise ValueError("`width` must be greater than zero.")
+        if n_bins < 1:
+            raise ValueError("Number of bins must be 1 or higher.")
+
+        phase_bins = np.linspace(0 - width / 2, 1 - width / 2, n_bins + 1)
+        phase_bins = [(p_l, p_u) for p_l, p_u in zip(phase_bins[:-1], phase_bins[1:])]
+
+    else:
+        if width is not None:
+            warnings.warn("`width` provided but phase bins already set - ignoring.")
+        if n_bins is not None:
+            warnings.warn("`n_bins` provided but phase bins already set - ignoring.")
+
+    out = [None] * len(phase_bins)
+    phases_mod = phases % 1  # ensure phases clipped to 0 - 1 range
+
+    for i, (lower, upper) in enumerate(phase_bins):
+
+        # clip phase bin edges to 0 - 1
+        lower_mod, upper_mod = lower % 1, upper % 1
+
+        # separate into two cases:
+        #  - bin enclosed by lower < p < upper
+        #  - bin wraps i.e. upper > 1 or lower < 0, so p < (upper % 1) and p > (lower % 1)
+        if lower_mod < upper_mod:
+            sel = (phases_mod > lower_mod) & (phases_mod < upper_mod)
+        elif lower_mod > upper_mod:
+            sel = (phases_mod > lower_mod) | (phases_mod < upper_mod)
+        else:
+            warnings.warn(f"Lower and upper phase bounds are the same: {lower_mod}, {upper_mod}.")
+
+        to_bin = [t for t, s in zip(spec, sel) if s]
+
+        # pass if no spectra in bin
+        if len(to_bin) == 0:
+            warnings.warn(f"No spectra between phases {lower_mod} and {upper_mod} - skipping.")
+            continue
+
+        # wavelength scales are the same from check_spectra
+        wvs = to_bin[0][:, 0]
+
+        fluxes = np.array([t[:, 1] for t in to_bin])
+        fluxes_ma = np.ma.MaskedArray(fluxes, mask=np.isnan(fluxes))
+
+        # if errors present, weight averages
+        if errors:
+            flux_errors = np.array([t[:, 2] for t in to_bin])
+            flux_errors_ma = np.ma.MaskedArray(flux_errors, mask=np.isnan(flux_errors))
+
+            weights = 1 / flux_errors_ma**2
+            flux_avg = np.ma.average(fluxes_ma, weights=weights, axis=0).data
+            flux_errors_avg = np.ma.sqrt(1 / weights.sum(axis=0)).data
+
+            out[i] = np.c_[wvs, flux_avg, flux_errors_avg]
+        else:
+            flux_avg = np.ma.average(fluxes_ma, axis=0).data
+            out[i] = np.c_[wvs, flux_avg]
+
+    return out
