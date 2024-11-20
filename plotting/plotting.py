@@ -1,10 +1,15 @@
-from astra.fitting.rvcfitting import sine_fit
+from astra.fitting.rvcfitting import sine_rvc
 
+import warnings
 import numpy as np
 # import matplotlib as mpl
 import matplotlib.pyplot as plt
 import corner
 
+__all__ = [
+    'multicorner',
+    'rvplot'
+]
 
 _corner_kws = dict(show_titles=True,
                    title_fmt='.1f',
@@ -202,6 +207,7 @@ def rvplot(
     rv_errs=None,
     fig=None,
     ax=None,
+    period=None,
     pars=None,
     par_errs=None,
     color=None,
@@ -239,10 +245,12 @@ def rvplot(
         Existing axes object to plot to - if given, must also provide `fig`.
         Created if not provided.
 
+    period: float, optional
+        Orbital period for phase folding - if provided 
     pars: iterable, length 4, optional
-        Paramters for RV fits, in order: K2, gamma, T0, period.
+        Parameters for RV fits, in order: K2, gamma, T0, period.
     par_errs: iterable, length 4, optional
-        Parameter errors for RV sampling, same order as `par_errs`.
+        Parameter errors for RV sampling, same order as `pars`.
 
     color: matplotlib color, optional
         Color of artists
@@ -287,7 +295,6 @@ def rvplot(
 
     # create figure if not given
     if fig is None and ax is None:
-        # fig, ax = plt.subplots(figsize=(8, 6), nrows=2, sharex=True, gridspec_kw={'height_ratios': (4, 1)})
         fig, ax = plt.subplots(nrows=2, sharex=True, gridspec_kw={'height_ratios': (4, 1)})
         fig.subplots_adjust(hspace=0)
 
@@ -295,7 +302,8 @@ def rvplot(
         ax[1].set_ylabel('Residuals ($\\mathrm{km\\,s^{-1}}$)')
         ax[1].hlines(0, 0, 1, color='k', ls='--', alpha=0.8)
 
-        if pars is None:
+        # plot in times if no period present for phase-folding
+        if pars is None and period is None:
             ax[1].set_xlabel('MJD (d)')
             ax[0].set_xlim(times.min(), times.max())
             ax[1].set_xlim(times.min(), times.max())
@@ -315,20 +323,30 @@ def rvplot(
     fill_kws = _fill_kws if fill_kws is None else _fill_kws | fill_kws
 
     # simply plot times + rvs and exit
+    # phase-fold if period given
     if pars is None:
-        ax[0].errorbar(times, rvs, rv_errs, color=color, label=label, **rv_kws)
+        if period is None:
+            ax[0].errorbar(times, rvs, rv_errs, color=color, label=label, **rv_kws)
+        else:
+            phases = ((times - 0.) / period) % 1
+            ax[0].errorbar(phases, rvs, rv_errs, color=color, label=label, **rv_kws)
         return fig, ax
 
     # proceeed with plotting a fit
-    K2, gamma, t0, period = pars
+    K2, gamma, t0, period_ = pars
     K2_err, gamma_err, t0_err, period_err = par_errs if par_errs is not None else ([None] * 4)
     par_errs_ = np.array([K2_err, gamma_err, t0_err, period_err])
+
+    if period is not None:
+        warnings.warn("Orbital period given in `pars` and `period` - ignoring `period`.")
+
+    period = period_
 
     phases = ((times - t0) / period) % 1
     phases_interp = np.linspace(0, 1, 1000)
 
-    rv_fit = sine_fit((phases * period) + t0, *pars) - (gamma if zero else 0)
-    rv_fit_interp = sine_fit((phases_interp * period) + t0, *pars) - (gamma if zero else 0)
+    rv_fit = sine_rvc((phases * period) + t0, *pars) - (gamma if zero else 0)
+    rv_fit_interp = sine_rvc((phases_interp * period) + t0, *pars) - (gamma if zero else 0)
 
     residuals = rvs - rv_fit - (gamma if zero else 0)
 
@@ -364,7 +382,7 @@ def rvplot(
 
     # scatter errors
     par_samples = pars + par_errs * np.random.normal(size=(n_rvsamples, 4))
-    rv_fit_samples = (np.array([sine_fit((phases_interp * period) + t0, *p) for p in par_samples])
+    rv_fit_samples = (np.array([sine_rvc((phases_interp * period) + t0, *p) for p in par_samples])
                       - (gamma if zero else 0))
 
     ax[0].fill_between(phases_interp,
