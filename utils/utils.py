@@ -176,8 +176,8 @@ def phase_average(
     spec: list[np.ndarray[float]],
     phases: np.ndarray[float],
     phase_bins: list[tuple[float, float]] | None = None,
-    width: float | None = None,
     n_bins: int | None = None,
+    width: float | None = None,
 ) -> list[np.ndarray[float]]:
     """
     Phase-bin a list of spectra, i.e. average according to orbital phase.
@@ -197,14 +197,16 @@ def phase_average(
     phase_bins: list of 2-tuples of floats, optional
         Phase bins to average in, as a list of tuples of (lower bound, upper bound).
         This will override `width` and `n_bins` if they are set.
+    n_bins: int, optional
+        Number of phase bins.
+        Ignored if `phase_bins` set explicitly, required if `phase_bins` is not set.
     width: float, optional
         Width of phase bins, such that a phase bin around a phase 'p' will be defined:
 
             p - (width / 2) < phases < p + (width / 2)
 
+        Defaults to 1 / n_bins if `phase_bins` is not set.
         Ignored if `phase_bins` set explicitly.
-    n_bins: int, optional
-        Number of phase bins. Ignored if `phase_bins` set explicitly.
 
     Returns:
     phase_averaged_spec: list of np.ndarray (or None)
@@ -217,15 +219,20 @@ def phase_average(
 
     # handle optional phase bins/widths + n_bins
     if phase_bins is None:
-        if width is None or n_bins is None:
-            raise ValueError("`width` and `n_bins` must be provided if `phase_bins` not set.")
-        if width <= 0:
-            raise ValueError("`width` must be greater than zero.")
-        if n_bins < 1:
+        if n_bins is None:
+            raise ValueError("`n_bins` must be provided if `phase_bins` not set.")
+        elif n_bins < 1:
             raise ValueError("Number of bins must be 1 or higher.")
 
-        phase_bins = np.linspace(0 - width / 2, 1 - width / 2, n_bins + 1)
-        phase_bins = [(p_l, p_u) for p_l, p_u in zip(phase_bins[:-1], phase_bins[1:])]
+        if width is None:
+            width = 1 / n_bins
+        elif width <= 0:
+            raise ValueError("`width` must be greater than zero.")
+
+        # create bins
+        bins = np.linspace(0, 1 - (1 / n_bins), n_bins)
+        lbs, ubs = bins - width / 2, bins + width / 2
+        phase_bins = [(lb, ub) for lb, ub in zip(lbs, ubs)]
 
     else:
         if width is not None:
