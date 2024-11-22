@@ -101,6 +101,8 @@ def linefitmc(
     mask_width: float | None = None,
     mask_width_scale: float = 2.,
     v_shifts: list[float] | None = None,
+    return_fwhm: bool = False,
+    return_all: bool = False,
     **kws
 ) -> np.ndarray[float]:
     """
@@ -139,6 +141,9 @@ def linefitmc(
     c_ = 299792.458
 
     spec_w_errors = check_spectra(spectra)
+
+    if return_fwhm and not fit_fwhm:
+        raise ValueError(f"Cannot return fwhm if not fitting fwhm.")
 
     plot_line_fits = kws.get('plot_line_fits', False)
     print_info = kws.get('print_info', False)
@@ -266,31 +271,19 @@ def linefitmc(
     # setup figure if requested
     if plot_line_fits:
 
-        wvs = spectra[0][:, 0]
-        # create mask over all wvs
-        mask = np.ones(wvs.size, dtype=bool)
-        # construct mask around lines
-        for line_wv in line_wvs:
-            wv_width = line_wv * (mask_width / c_)
-            lb, ub = line_wv - wv_width / 2, line_wv + wv_width / 2
-            mask = mask & ~((wvs > lb) & (wvs < ub))
-        mask = ~mask
-
-        # find edges of mask
-        block_search = np.diff(np.r_[False, mask, False].astype(int))
-        starts0, ends0 = wvs[block_search[:-1] == 1], wvs[block_search[1:] == -1]
-        n_blocks0 = len(starts0)
-
-        fig, axes = plt.subplots(figsize=(10, 1.5 * len(spectra)), ncols=n_blocks0, sharey=True)
+        fig, axes = plt.subplots(figsize=(10, 1.5 * len(spectra)), ncols=n_blocks, sharey=True)
         fig.subplots_adjust(wspace=0)
-        axes = [axes] if n_blocks0 == 1 else axes
+        axes = [axes] if n_blocks == 1 else axes
 
     progress = True
 
     # disable progress bar if requested by replacing with dummy class that does nothing
     pbar_manager = tqdm if progress else dummy_pbar
 
-    rvs, rv_errs = np.zeros(len(spectra)), np.zeros(len(spectra))
+    # rvs, rv_errs = np.zeros(len(spectra)), np.zeros(len(spectra))
+
+    # double for param + errs
+    output_array = np.zeros((len(spectra), 2 * n_dim))
 
     with pbar_manager(desc='linefitmc: ', total=len(spectra)) as pbar:
         for ispec, spec in enumerate(spectra):
@@ -327,73 +320,84 @@ def linefitmc(
             _ = sampler.run_mcmc(init_state, nsteps=n_samples, progress=False)
             r = sampler.get_chain(flat=True, thin=1, discard=n_burnin)
 
-            # get outputs and errors
+            # get outputs and errors, save
             pars_out = np.median(r, axis=0)
-            par_lerrs = pars_out - np.quantile(r, 0.16, axis=0)
-            par_uerrs = np.quantile(r, 0.84, axis=0) - pars_out
-
-            rv_out, fwhm_out = pars_out[0], pars_out[1]
-            rv_out = pars_out[0]
-
-            # deal with variable number of parameters
-            if fit_fwhm:
-                fwhm_out = pars_out[1]
-                par_idx = 2
-            else:
-                fwhm_out = init_fwhm
-                par_idx = 1
-            heights_out = pars_out[par_idx:par_idx + n_lines]
-            par_idx += n_lines
-
-            if fit_offsets:
-                offsets_out = pars_out[par_idx:par_idx + n_blocks] if multiple_offsets else np.array([pars_out[par_idx]] * n_blocks)
-                par_idx += n_blocks if multiple_offsets else 1
-            else:
-                offsets_out = offsets0
-            if fit_slopes:
-                slopes_out = pars_out[par_idx:]
-            else:
-                slopes_out = slopes0
+            par_errs = 0.5 * (np.quantile(r, 0.84, axis=0) - np.quantile(r, 0.16, axis=0))
+            output_array[ispec, 0::2] = pars_out
+            output_array[ispec, 1::2] = par_errs
 
             pbar.update(1)
 
-            # save results
-            rvs[ispec] = rv_out
-            rv_errs[ispec] = (par_uerrs[0] + par_lerrs[0]) / 2
+            par_lerrs = pars_out - np.quantile(r, 0.16, axis=0)
+            par_uerrs = np.quantile(r, 0.84, axis=0) - pars_out
 
-            #### extra diagnostics ####
+            if plot_line_fits or print_info:
 
-            if plot_line_fits:
-                line_fluxes = generate_multilines(wvs_masked, np.array(line_wvs), heights_out, rv_out, fwhm_out)
-                conti_flux = generate_conti(wvs_masked, starts, ends, offsets_out, slopes_out)
-                total_flux = line_fluxes + conti_flux
+                rv_out, fwhm_out = pars_out[0], pars_out[1]
+                rv_out = pars_out[0]
 
-                for ax in axes:
+                # deal with variable number of parameters
+                if fit_fwhm:
+                    fwhm_out = pars_out[1]
+                    par_idx = 2
+                else:
+                    fwhm_out = init_fwhm
+                    par_idx = 1
+                heights_out = pars_out[par_idx:par_idx + n_lines]
+                par_idx += n_lines
 
-                    ax.plot(wvs, flux - ispec, color='k', lw=1)
+                if fit_offsets:
+                    offsets_out = pars_out[par_idx:par_idx + n_blocks] if multiple_offsets else np.array([pars_out[par_idx]] * n_blocks)
+                    par_idx += n_blocks if multiple_offsets else 1
+                else:
+                    offsets_out = offsets0
+                if fit_slopes:
+                    slopes_out = pars_out[par_idx:]
+                else:
+                    slopes_out = slopes0
 
-                    for start, end in zip(starts, ends):
-                        block_mask = (wvs_masked > start) & (wvs_masked < end)
-                        ax.plot(wvs_masked[block_mask], total_flux[block_mask] - ispec, color='r', lw=1)
+                # # save results
+                # rvs[ispec] = rv_out
+                # rv_errs[ispec] = (par_uerrs[0] + par_lerrs[0]) / 2
 
-                    ax.vlines([line_wv * (1 + (rv_out / c_)) for line_wv in line_wvs], -ispec - 0.2, -ispec, color='r', lw=1)
+                #### extra diagnostics ####
 
-                    ax.vlines(line_wvs, -ispec - 0.4, -ispec - 0.2, color='b', lw=1)
-                    ax.vlines([line_wv * (1 + (rv0 / c_)) for line_wv in line_wvs], -ispec - 0.4, -ispec - 0.2, color='g', lw=1)
+                if plot_line_fits:
+                    line_fluxes = generate_multilines(wvs_masked, np.array(line_wvs), heights_out, rv_out, fwhm_out)
+                    conti_flux = generate_conti(wvs_masked, starts, ends, offsets_out, slopes_out)
+                    total_flux = line_fluxes + conti_flux
 
-            if print_info:
-                info = f"init rv: {rv0:.0f} km/s  "
-                info += f"rv: {rv_out:.0f}+{par_uerrs[0]:.0f}-{par_lerrs[0]:.0f} km/s"
-                info += f"fwhm: {fwhm_out:.0f}+{par_uerrs[1]:.0f}-{par_lerrs[1]:.0f} km/s"
-                info += '  heights: ' + ', '.join([f'{h:.2f}' for h in heights_out])
-                info += '  offsets: ' + ', '.join([f'{o:.2f}' for o in offsets_out])
-                info += '  slopes: ' + ', '.join([f'{s:.4f}' for s in slopes_out])
+                    for ax in axes:
 
-                print(info)
+                        ax.plot(wvs, flux - ispec, color='k', lw=1)
+
+                        for start, end in zip(starts, ends):
+                            block_mask = (wvs_masked > start) & (wvs_masked < end)
+                            ax.plot(wvs_masked[block_mask], total_flux[block_mask] - ispec, color='r', lw=1)
+
+                        ax.vlines([line_wv * (1 + (rv_out / c_)) for line_wv in line_wvs], -ispec - 0.2, -ispec, color='r', lw=1)
+
+                        ax.vlines(line_wvs, -ispec - 0.4, -ispec - 0.2, color='b', lw=1)
+                        ax.vlines([line_wv * (1 + (rv0 / c_)) for line_wv in line_wvs], -ispec - 0.4, -ispec - 0.2, color='g', lw=1)
+
+                if print_info:
+                    info = f"init rv: {rv0:.0f} km/s  "
+                    info += f"rv: {rv_out:.0f}+{par_uerrs[0]:.0f}-{par_lerrs[0]:.0f} km/s"
+                    info += f"fwhm: {fwhm_out:.0f}+{par_uerrs[1]:.0f}-{par_lerrs[1]:.0f} km/s"
+                    info += '  heights: ' + ', '.join([f'{h:.2f}' for h in heights_out])
+                    info += '  offsets: ' + ', '.join([f'{o:.2f}' for o in offsets_out])
+                    info += '  slopes: ' + ', '.join([f'{s:.4f}' for s in slopes_out])
+
+                    print(info)
 
     if plot_line_fits:
         edge_spacing = 0.8
         for ax, start, end in zip(axes, starts0, ends0):
             ax.set_xlim(start - edge_spacing * (end - start), end + edge_spacing * (end - start))
 
-    return np.vstack([rvs, rv_errs]).T
+    if return_all:
+        return output_array
+    elif return_fwhm:
+        return output_array[:, 0:4]
+    else:
+        return output_array[:, 0:2]
