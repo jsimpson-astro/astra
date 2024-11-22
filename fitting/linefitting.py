@@ -1,4 +1,4 @@
-from astra.utils.helpers import dummy_pbar
+from astra.utils.helpers import dummy_pbar, check_spectra, check_vbinned
 
 import numpy as np
 from numba import njit
@@ -137,10 +137,14 @@ def linefitmc(
 
     """
     c_ = 299792.458
+
+    spec_w_errors = check_spectra(spectra)
+
     plot_line_fits = kws.get('plot_line_fits', False)
     print_info = kws.get('print_info', False)
     progress = kws.get('progress', True)
 
+    # check params
     if not hasattr(init_heights, '__len__'):
         init_heights_ = [init_heights] * len(line_wvs)
     else:
@@ -164,10 +168,102 @@ def linefitmc(
     if offset_bounds is not None and offset_bounds[0] > offset_bounds[1]:
         raise ValueError("Invalid offset_bounds - offset_bounds[1] must be greater than offset_bounds[0].")
 
-    rvs, rv_errs = np.zeros(len(spectra)), np.zeros(len(spectra))
-
+    # set mask width from scale if not explicitly given
     mask_width = mask_width_scale * search_width if mask_width is None else mask_width
 
+    ####
+
+    # setup masks and blocking, determine number of free params
+    wvs = spectra[0][:, 0]  # all spectra have same wv scales
+    mask = np.ones(wvs.shape, dtype=bool)
+
+    # construct mask around lines
+    for line_wv in line_wvs:
+        wv_width = line_wv * (mask_width / c_)
+        lb, ub = line_wv - wv_width / 2, line_wv + wv_width / 2
+        mask = mask & ~((wvs > lb) & (wvs < ub))
+    mask = ~mask
+
+    # find edges of mask
+    block_search = np.diff(np.r_[False, mask, False].astype(int))
+    starts0, ends0 = wvs[block_search[:-1] == 1], wvs[block_search[1:] == -1]
+    n_blocks = len(starts0)
+
+    # prepare starting samples
+    offsets0 = init_offset * np.ones(n_blocks)
+    slopes0 = np.zeros(n_blocks)
+
+    n_dim = (2 if fit_fwhm else 1) + n_lines  # 1 for rv, 1 for fwhm, each line's height
+    init_pars = [None] + ([init_fwhm] if fit_fwhm else [])  # placeholder rv
+    init_pars += init_heights_
+    init_scatter = [search_width / 2] + ([init_fwhm / 10] if fit_fwhm else [])
+    init_scatter += [h / 10 for h in init_heights_]
+
+    if fit_offsets:
+        n_dim = n_dim + (n_blocks if multiple_offsets else 1)
+        init_pars += list(offsets0) if multiple_offsets else [init_offset]
+        init_scatter += [0.1 for o in offsets0] if multiple_offsets else [0.1]
+
+    if fit_slopes:
+        n_dim = n_dim + n_blocks
+        init_pars += list(slopes0)
+        init_scatter += [1e-6 for s in slopes0]
+
+    # assemble cost_function
+    def cost_func(pars, rv0):
+        rv = pars[0]
+
+        if fit_fwhm:
+            fwhm = pars[1]
+            par_idx = 2
+        else:
+            fwhm = init_fwhm
+            par_idx = 1
+
+        # check uniform 'priors'
+        if not rv0 - search_width < rv < rv0 + search_width:
+            return -np.inf
+
+        if not fwhm_bounds[0] < fwhm < fwhm_bounds[1]:
+            return -np.inf
+
+        heights = pars[par_idx:n_lines + par_idx]
+        par_idx += n_lines
+
+        if (height_bounds is not None
+                and np.any((heights < height_bounds[0]) | (heights > height_bounds[1]))):
+            return -np.inf
+
+        # deal with variable number of parameters
+        if fit_offsets:
+            offsets = pars[par_idx:par_idx + n_blocks] if multiple_offsets else np.array([pars[par_idx]] * n_blocks)
+            par_idx += n_blocks if multiple_offsets else 1
+
+            if (offset_bounds is not None
+                    and np.any((offsets < offset_bounds[0]) | (offsets > offset_bounds[1]))):
+                return -np.inf
+        else:
+            offsets = offsets0
+        if fit_slopes:
+            slopes = pars[par_idx:]
+        else:
+            slopes = slopes0
+
+        # compute fluxes
+        line_fluxes = generate_multilines(wvs_masked, np.array(line_wvs), heights, rv, fwhm)
+        conti_flux = generate_conti(wvs_masked, starts, ends, offsets, slopes)
+        total_flux = line_fluxes + conti_flux
+
+        # compute log likelihood
+        chisq = ((flux_masked - total_flux)**2 / flux_errs_masked**2).sum()
+        # lnprior = np.log(1.0 /(np.sqrt(2 * np.pi) * rv0_err))-0.5*(rv - rv0)**2 / rv0_err**2
+        lnprior = 0
+
+        return -0.5 * chisq + lnprior
+
+    ##############
+
+    # setup figure if requested
     if plot_line_fits:
 
         wvs = spectra[0][:, 0]
@@ -175,7 +271,6 @@ def linefitmc(
         mask = np.ones(wvs.size, dtype=bool)
         # construct mask around lines
         for line_wv in line_wvs:
-            # shifted wv
             wv_width = line_wv * (mask_width / c_)
             lb, ub = line_wv - wv_width / 2, line_wv + wv_width / 2
             mask = mask & ~((wvs > lb) & (wvs < ub))
@@ -195,6 +290,8 @@ def linefitmc(
     # disable progress bar if requested by replacing with dummy class that does nothing
     pbar_manager = tqdm if progress else dummy_pbar
 
+    rvs, rv_errs = np.zeros(len(spectra)), np.zeros(len(spectra))
+
     with pbar_manager(desc='linefitmc: ', total=len(spectra)) as pbar:
         for ispec, spec in enumerate(spectra):
 
@@ -206,6 +303,7 @@ def linefitmc(
 
             rv0 = v_shifts[ispec]
             rv0_err = 10
+            init_pars[0] = rv0
 
             # construct mask around lines
             for line_wv in line_wvs:
@@ -219,83 +317,13 @@ def linefitmc(
             wvs_masked, flux_masked, flux_errs_masked = wvs[mask], flux[mask], flux_errs[mask]
 
             # find edges of mask
-            block_search = np.diff(np.r_[False, mask, False].astype(int))
-            starts, ends = wvs[block_search[:-1] == 1], wvs[block_search[1:] == -1]
-            n_blocks = len(starts)
+            starts, ends = starts0 * (1 + rv0 / c_), ends0 * (1 + rv0 / c_)
 
-            # prepare starting samples
-            offsets0 = init_offset * np.ones(n_blocks)
-            slopes0 = np.zeros(n_blocks)
-
-            n_dim = (2 if fit_fwhm else 1) + n_lines  # 1 for rv, 1 for fwhm, each line's height
-            init_pars = [rv0] + ([init_fwhm] if fit_fwhm else []) + init_heights_
-            init_scatter = [search_width / 2] + ([init_fwhm / 10] if fit_fwhm else []) + [h / 10 for h in init_heights_]
-
-            if fit_offsets:
-                n_dim = n_dim + (len(offsets0) if multiple_offsets else 1)
-                init_pars += list(offsets0) if multiple_offsets else [init_offset]
-                init_scatter += [0.1 for o in offsets0] if multiple_offsets else [0.1]
-
-            if fit_slopes:
-                n_dim = n_dim + len(slopes0)
-                init_pars += list(slopes0)
-                init_scatter += [1e-6 for s in slopes0]
-
-            # assemble cost_function
-            def cost_func(pars):
-                rv = pars[0]
-
-                if fit_fwhm:
-                    fwhm = pars[1]
-                    par_idx = 2
-                else:
-                    fwhm = init_fwhm
-                    par_idx = 1
-
-                # check uniform 'priors'
-                if not rv0 - search_width < rv < rv0 + search_width:
-                    return -np.inf
-
-                if not fwhm_bounds[0] < fwhm < fwhm_bounds[1]:
-                    return -np.inf
-
-                heights = pars[par_idx:n_lines + par_idx]
-                par_idx += n_lines
-
-                if (height_bounds is not None
-                        and np.any((heights < height_bounds[0]) | (heights > height_bounds[1]))):
-                    return -np.inf
-
-                # deal with variable number of parameters
-                if fit_offsets:
-                    offsets = pars[par_idx:par_idx + n_blocks] if multiple_offsets else np.array([pars[par_idx]] * n_blocks)
-                    par_idx += n_blocks if multiple_offsets else 1
-
-                    if (offset_bounds is not None
-                            and np.any((offsets < offset_bounds[0]) | (offsets > offset_bounds[1]))):
-                        return -np.inf
-                else:
-                    offsets = offsets0
-                if fit_slopes:
-                    slopes = pars[par_idx:]
-                else:
-                    slopes = slopes0
-
-                # compute fluxes
-                line_fluxes = generate_multilines(wvs_masked, np.array(line_wvs), heights, rv, fwhm)
-                conti_flux = generate_conti(wvs_masked, starts, ends, offsets, slopes)
-                total_flux = line_fluxes + conti_flux
-
-                # compute log likelihood
-                chisq = ((flux_masked - total_flux)**2 / flux_errs_masked**2).sum()
-                # lnprior = np.log(1.0 /(np.sqrt(2 * np.pi) * rv0_err))-0.5*(rv - rv0)**2 / rv0_err**2
-                lnprior = 0
-
-                return -0.5 * chisq + lnprior
+            #####################
 
             # sample
             init_state = init_pars + init_scatter * np.random.uniform(-1, 1, size=(n_walkers, n_dim))
-            sampler = emcee.EnsembleSampler(n_walkers, n_dim, cost_func)
+            sampler = emcee.EnsembleSampler(n_walkers, n_dim, cost_func, args=(rv0,))
             _ = sampler.run_mcmc(init_state, nsteps=n_samples, progress=False)
             r = sampler.get_chain(flat=True, thin=1, discard=n_burnin)
 
