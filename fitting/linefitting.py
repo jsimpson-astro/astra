@@ -93,15 +93,16 @@ def linefitmc(
     fit_fwhm: bool = True,
     fit_offsets: bool = True,
     fit_slopes: bool = False,
-    fwhm_bounds: tuple | None = None,
-    height_bounds: tuple | None = None,
-    offset_bounds: tuple | None = None,
+    fwhm_bounds: tuple[float, float] | None = None,
+    height_bounds: tuple[float, float] | None = None,
+    offset_bounds: tuple[float, float] | None = None,
     multiple_offsets: bool = False,
     search_width: float = 2000.,
     mask_width: float | None = None,
     mask_width_scale: float = 2.,
     v_shifts: list[float] | None = None,
     return_fwhm: bool = False,
+    return_heights: bool = False,
     return_all: bool = False,
     **kws
 ) -> np.ndarray[float]:
@@ -115,27 +116,82 @@ def linefitmc(
         Each spectrum should have two or optionally three columns: wavelength, flux, and flux error.
     line_wvs: list of floats
         List of rest wavelengths of lines of interest, in angstroms.
+
+    n_walkers: int, default 16
+        Number of walkers for emcee sampling.
+    n_samples: int, default 1000
+        Number of steps for emcee sampling.
+    n_burnin: int, default 100
+        Number of steps to discard from sampling before parameter estimation.
+
     init_fwhm: float, default 100 km/s
         Starting value of FWHM of lines, in km/s.
     init_heights: float or list of floats, default -1.
+        Starting value, or values, of line heights.
+        Negative values for absorption, positive for emission.
+        A list of floats can be provided to set each height individually.
+        Alternatively, a single value will set the height for all lines.
+    init_offset: float, default 1.
+        Starting value for continuum level of lines.
 
-    init_offsets: float or list, default 1.
-
-    init_slopes: float or list of floats, default 0.
-
+    fit_fwhm: bool, default True
+        Determines if line FWHM is fit.
+        Otherwise fwhm is fixed to `init_fwhm`.
     fit_offsets: bool, default True
-
+        Determines if line offset(s) are fit.
+        Otherwise offsets are fixed to `init_offset`.
     fit_slopes: bool, default False
+        Determines if slopes around lines are fit.
+        Otherwise only flat offset fits are performed.
 
-    search_width: float, default 1000 km/s
+    fwhm_bounds: tuple of (float, float), optional
+        Bounds on FWHM (in km/s) during fitting.
+    height_bounds: tuple of (float, float), optional
+        Bounds on heights during fitting.
+    offset_bounds: tuple of (float, float), optional
+        Bounds on offset(s) during fitting.
+
+    multiple_offsets: bool, default False
+        Determines if multiple offsets or a single offset for all lines.
+
+    search_width: float, default 2000.
+        Search width around line wavelengths, in km/s.
+    mask_width: float, optional
+        Width to set masks around line wavelengths on spectra, in km/s,
+        to specify the points included in fitting.
+        Must be larger than search width (ideally with some margin).
+        If not given, determined from `mask_width_scale` * `search_width`.
+    mask_width_scale: float, default 2.
+        Width to set `mask_width`, as a scale factor on `search_width`.
+        Must be greater than 1.
 
     v_shifts: list of floats, optional
+        Initial velocity shifts to search around, in km/s.
+
+    return_fwhm: bool, default False
+        Determines if FWHM and FWHM error are returned along with RV and RV errors.
+        `fit_fwhm` must be True. Overridden by `return_all`.
+    return_heights: bool, default False
+        Determines if line heights and line height errors are returned along with RV and RV errors.
+        Overridden by `return_all`.
+    return_all: bool, default False
+        Determines if all parameters and errors are returned.
+        In this case, the output array will consist of the following columns:
+        RV       RVerr
+        FWHM     FWHMerr  (if fit_fwhm)
+        Height1  Height1err
+         (1 height per line wavelength)
+        Offset1  Offset1err  (if fit_offsets)
+         (1 offset per continuous region in mask if multiple_offsets)
+        Slope1   Slope1err  (if fit_slopes)
+         (1 slope per continuous region in mask)
 
     Returns
     -------
-    rv_array: np.ndarray
+    output_array: np.ndarray
         2D array of results, one row per spectrum.
         Column 1: radial velocities, column 2: radial velocity errors.
+        Additional columns depend on values on `return_fwhm` and `return_all`.
 
     """
     c_ = 299792.458
@@ -150,11 +206,11 @@ def linefitmc(
     progress = kws.get('progress', True)
 
     # check params
+    n_lines = len(line_wvs)
     if not hasattr(init_heights, '__len__'):
-        init_heights_ = [init_heights] * len(line_wvs)
+        init_heights_ = [init_heights] * n_lines
     else:
         init_heights_ = init_heights
-    n_lines = len(init_heights_)
 
     if v_shifts is None:
         v_shifts = [0.] * len(line_wvs)
@@ -175,6 +231,9 @@ def linefitmc(
 
     # set mask width from scale if not explicitly given
     mask_width = mask_width_scale * search_width if mask_width is None else mask_width
+
+    if mask_width < search_width:
+        raise ValueError("mask_width must be wider than search_width (ideally with some margin).")
 
     ####
 
@@ -397,6 +456,9 @@ def linefitmc(
 
     if return_all:
         return output_array
+
+    if return_heights:
+        return output_array[:, 0:(4 if return_fwhm else 2) + 2 * n_lines]
     elif return_fwhm:
         return output_array[:, 0:4]
     else:
