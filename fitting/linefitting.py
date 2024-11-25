@@ -213,7 +213,7 @@ def linefitmc(
         init_heights_ = init_heights
 
     if v_shifts is None:
-        v_shifts = [0.] * len(line_wvs)
+        v_shifts = [0.] * len(spectra)
 
     if fwhm_bounds is None:
         fwhm_bounds = (0., search_width)
