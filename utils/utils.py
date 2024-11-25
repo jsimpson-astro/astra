@@ -1,7 +1,8 @@
 __all__ = [
-    'taper_spectrum',
+    'taper_spec',
     'calculate_vpx',
     'mask_interp',
+    'average_spec',
     'phase_average'
 ]
 
@@ -13,7 +14,7 @@ import warnings
 c_ = 299792.458
 
 
-def taper_spectrum(
+def taper_spec(
     spectrum: np.ndarray,
     taper: float,
     taper_errors: bool = False,
@@ -172,6 +173,34 @@ def mask_interp(
     return spectrum_i
 
 
+def average_spec(spec: list[np.ndarray[float]]) -> np.ndarray[float]:
+    """
+    Average a list of spectra together, weighted by errors
+
+    """
+    errors = check_spectra(spec)
+
+    # wavelength scales are the same from check_spectra
+    wvs = spec[0][:, 0]
+
+    fluxes = np.array([s[:, 1] for s in spec])
+    fluxes_ma = np.ma.MaskedArray(fluxes, mask=np.isnan(fluxes))
+
+    # if errors present, weight averages
+    if errors:
+        flux_errors = np.array([s[:, 2] for s in spec])
+        flux_errors_ma = np.ma.MaskedArray(flux_errors, mask=np.isnan(flux_errors))
+
+        weights = 1 / flux_errors_ma**2
+        flux_avg = np.ma.average(fluxes_ma, weights=weights, axis=0).data
+        flux_errors_avg = np.ma.sqrt(1 / weights.sum(axis=0)).data
+
+        return np.c_[wvs, flux_avg, flux_errors_avg]
+    else:
+        flux_avg = np.ma.average(fluxes_ma, axis=0).data
+        return np.c_[wvs, flux_avg]
+
+
 def phase_average(
     spec: list[np.ndarray[float]],
     phases: np.ndarray[float],
@@ -223,6 +252,8 @@ def phase_average(
             raise ValueError("`n_bins` must be provided if `phase_bins` not set.")
         elif n_bins < 1:
             raise ValueError("Number of bins must be 1 or higher.")
+        elif n_bins == 1 and (width is None or width >= 1):
+            return [average_spec(spec)]
 
         if width is None:
             width = 1 / n_bins
@@ -257,6 +288,7 @@ def phase_average(
             sel = (phases_mod > lower_mod) | (phases_mod < upper_mod)
         else:
             warnings.warn(f"Lower and upper phase bounds are the same: {lower_mod}, {upper_mod}.")
+            sel = phases_mod == lower_mod
 
         to_bin = [t for t, s in zip(spec, sel) if s]
 
@@ -265,24 +297,6 @@ def phase_average(
             warnings.warn(f"No spectra between phases {lower_mod} and {upper_mod} - skipping.")
             continue
 
-        # wavelength scales are the same from check_spectra
-        wvs = to_bin[0][:, 0]
-
-        fluxes = np.array([t[:, 1] for t in to_bin])
-        fluxes_ma = np.ma.MaskedArray(fluxes, mask=np.isnan(fluxes))
-
-        # if errors present, weight averages
-        if errors:
-            flux_errors = np.array([t[:, 2] for t in to_bin])
-            flux_errors_ma = np.ma.MaskedArray(flux_errors, mask=np.isnan(flux_errors))
-
-            weights = 1 / flux_errors_ma**2
-            flux_avg = np.ma.average(fluxes_ma, weights=weights, axis=0).data
-            flux_errors_avg = np.ma.sqrt(1 / weights.sum(axis=0)).data
-
-            out[i] = np.c_[wvs, flux_avg, flux_errors_avg]
-        else:
-            flux_avg = np.ma.average(fluxes_ma, axis=0).data
-            out[i] = np.c_[wvs, flux_avg]
+        out[i] = average_spec(to_bin)
 
     return out
