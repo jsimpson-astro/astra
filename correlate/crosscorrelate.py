@@ -1,4 +1,4 @@
-from astra.utils import calculate_vpx, taper_spectrum
+from astra.utils import calculate_vpx, taper_spec
 from astra.utils.helpers import dummy_pbar, xcheck_spectra, check_vbinned, automask
 
 import warnings
@@ -307,8 +307,8 @@ def xcorrelate(
     v_avg = calculate_vpx(obs_wvs)
 
     if taper > 0.:
-        obs_data = [taper_spectrum(s, taper) for s in obs]
-        template_ = taper_spectrum(template, taper)
+        obs_data = [taper_spec(s, taper) for s in obs]
+        template_ = taper_spec(template, taper)
     else:
         obs_data = obs
         template_ = template
@@ -321,10 +321,10 @@ def xcorrelate(
         obs_data = [None] * n_obs
         for i, s in enumerate(obs):
             obs_data[i] = s.copy()
-            obs_data[i][idx0:idx1] = taper_spectrum(s[idx0:idx1], taper_scaled)
+            obs_data[i][idx0:idx1] = taper_spec(s[idx0:idx1], taper_scaled)
 
         template_ = template.copy()
-        template_[idx0:idx1] = taper_spectrum(template_[idx0:idx1], taper_scaled)
+        template_[idx0:idx1] = taper_spec(template_[idx0:idx1], taper_scaled)
     else:
         obs_data = obs
         template_ = template
@@ -487,12 +487,12 @@ def xcorrelate_multi(
         obs_data = [None] * n_obs
         for i, s in enumerate(obs):
             obs_data[i] = s.copy()
-            obs_data[i][idx0:idx1] = taper_spectrum(s[idx0:idx1], taper_scaled)
+            obs_data[i][idx0:idx1] = taper_spec(s[idx0:idx1], taper_scaled)
 
         templ_data = [None] * n_templ
         for i, s in enumerate(templates):
             templ_data[i] = s.copy()
-            templ_data[i][idx0:idx1] = taper_spectrum(s[idx0:idx1], taper_scaled)
+            templ_data[i][idx0:idx1] = taper_spec(s[idx0:idx1], taper_scaled)
     else:
         obs_data = obs
         templ_data = templates
