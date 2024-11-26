@@ -1,4 +1,15 @@
+__all__ = [
+    'deprecated_',
+    'dummy_pbar',
+    'check_spectra',
+    'xcheck_spectra',
+    'check_vbinned',
+    'apply_mask',
+    'automask'
+]
+
 from typing_extensions import deprecated
+from inspect import signature
 import numpy as np
 
 
@@ -16,6 +27,9 @@ def deprecated_(*dep_args, **dep_kwargs):
         msg = dep_args[0] if dep_args else dep_kwargs['msg']
         newdoc = f"- {msg}" + '\n' + func.__doc__
         wrapper.__doc__ = newdoc
+
+        # set signature to match
+        wrapper.__signature__ = signature(func)
 
         return wrapper
 
