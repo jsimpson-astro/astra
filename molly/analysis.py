@@ -1,7 +1,7 @@
 from .utils import apply_mask, dummy_pbar
 from .core_nj import f77_xcor_nj
 from .core import f77_ew, f77_optsub, xcor_quad_max
-from astra.utils.helpers import deprecated_
+from astra.utils._helpers import deprecated_
 
 import numpy as np
 from tqdm.auto import tqdm

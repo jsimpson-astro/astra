@@ -6,7 +6,7 @@ __all__ = [
     'phase_average'
 ]
 
-from astra.utils.helpers import check_spectra
+from astra.utils._helpers import check_spectra
 
 import numpy as np
 import warnings

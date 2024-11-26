@@ -1,4 +1,4 @@
-from astra.utils.helpers import check_spectra, check_vbinned, automask
+from astra.utils._helpers import check_spectra, check_vbinned, automask
 
 import warnings
 import numpy as np

@@ -1,4 +1,4 @@
-from astra.utils.helpers import dummy_pbar, check_spectra, check_vbinned
+from astra.utils._helpers import dummy_pbar, check_spectra, check_vbinned
 
 import numpy as np
 from numba import njit
@@ -82,7 +82,7 @@ def generate_conti(
 
 
 def linefitmc(
-    spectra: list[np.ndarray],
+    spec: list[np.ndarray],
     line_wvs: list[float],
     n_walkers: int = 16,
     n_samples: int = 1000,
@@ -111,7 +111,7 @@ def linefitmc(
 
     Parameters
     ----------
-    spectra: list of np.ndarray
+    spec: list of np.ndarray
         List of input spectra to measure radial velocities from.
         Each spectrum should have two or optionally three columns: wavelength, flux, and flux error.
     line_wvs: list of floats
@@ -196,7 +196,7 @@ def linefitmc(
     """
     c_ = 299792.458
 
-    spec_w_errors = check_spectra(spectra)
+    spec_w_errors = check_spectra(spec)
 
     if return_fwhm and not fit_fwhm:
         raise ValueError(f"Cannot return fwhm if not fitting fwhm.")
@@ -213,7 +213,7 @@ def linefitmc(
         init_heights_ = init_heights
 
     if v_shifts is None:
-        v_shifts = [0.] * len(spectra)
+        v_shifts = [0.] * len(spec)
 
     if fwhm_bounds is None:
         fwhm_bounds = (0., search_width)
@@ -238,7 +238,7 @@ def linefitmc(
     ####
 
     # setup masks and blocking, determine number of free params
-    wvs = spectra[0][:, 0]  # all spectra have same wv scales
+    wvs = spec[0][:, 0]  # all spectra have same wv scales
     mask = np.ones(wvs.shape, dtype=bool)
 
     # construct mask around lines
@@ -330,7 +330,7 @@ def linefitmc(
     # setup figure if requested
     if plot_line_fits:
 
-        fig, axes = plt.subplots(figsize=(10, 1.5 * len(spectra)), ncols=n_blocks, sharey=True)
+        fig, axes = plt.subplots(figsize=(10, 1.5 * len(spec)), ncols=n_blocks, sharey=True)
         fig.subplots_adjust(wspace=0)
         axes = [axes] if n_blocks == 1 else axes
 
@@ -339,21 +339,21 @@ def linefitmc(
     # disable progress bar if requested by replacing with dummy class that does nothing
     pbar_manager = tqdm if progress else dummy_pbar
 
-    # rvs, rv_errs = np.zeros(len(spectra)), np.zeros(len(spectra))
+    # rvs, rv_errs = np.zeros(len(spec)), np.zeros(len(spec))
 
     # double for param + errs
-    output_array = np.zeros((len(spectra), 2 * n_dim))
+    output_array = np.zeros((len(spec), 2 * n_dim))
 
-    with pbar_manager(desc='linefitmc: ', total=len(spectra)) as pbar:
-        for ispec, spec in enumerate(spectra):
+    with pbar_manager(desc='linefitmc: ', total=len(spec)) as pbar:
+        for i_spec, s in enumerate(spec):
 
-            wvs, flux = spec[:, 0], spec[:, 1]
-            flux_errs = spec[:, 2] if spec.shape[1] > 2 else np.ones_like(flux)
+            wvs, flux = s[:, 0], s[:, 1]
+            flux_errs = s[:, 2] if s.shape[1] > 2 else np.ones_like(flux)
 
             # create mask over all wvs
             mask = np.ones(wvs.size, dtype=bool)
 
-            rv0 = v_shifts[ispec]
+            rv0 = v_shifts[i_spec]
             rv0_err = 10
             init_pars[0] = rv0
 
@@ -382,8 +382,8 @@ def linefitmc(
             # get outputs and errors, save
             pars_out = np.median(r, axis=0)
             par_errs = 0.5 * (np.quantile(r, 0.84, axis=0) - np.quantile(r, 0.16, axis=0))
-            output_array[ispec, 0::2] = pars_out
-            output_array[ispec, 1::2] = par_errs
+            output_array[i_spec, 0::2] = pars_out
+            output_array[i_spec, 1::2] = par_errs
 
             pbar.update(1)
 
@@ -416,8 +416,8 @@ def linefitmc(
                     slopes_out = slopes0
 
                 # # save results
-                # rvs[ispec] = rv_out
-                # rv_errs[ispec] = (par_uerrs[0] + par_lerrs[0]) / 2
+                # rvs[i_spec] = rv_out
+                # rv_errs[i_spec] = (par_uerrs[0] + par_lerrs[0]) / 2
 
                 #### extra diagnostics ####
 
@@ -428,16 +428,16 @@ def linefitmc(
 
                     for ax in axes:
 
-                        ax.plot(wvs, flux - ispec, color='k', lw=1)
+                        ax.plot(wvs, flux - i_spec, color='k', lw=1)
 
                         for start, end in zip(starts, ends):
                             block_mask = (wvs_masked > start) & (wvs_masked < end)
-                            ax.plot(wvs_masked[block_mask], total_flux[block_mask] - ispec, color='r', lw=1)
+                            ax.plot(wvs_masked[block_mask], total_flux[block_mask] - i_spec, color='r', lw=1)
 
-                        ax.vlines([line_wv * (1 + (rv_out / c_)) for line_wv in line_wvs], -ispec - 0.2, -ispec, color='r', lw=1)
+                        ax.vlines([line_wv * (1 + (rv_out / c_)) for line_wv in line_wvs], -i_spec - 0.2, -i_spec, color='r', lw=1)
 
-                        ax.vlines(line_wvs, -ispec - 0.4, -ispec - 0.2, color='b', lw=1)
-                        ax.vlines([line_wv * (1 + (rv0 / c_)) for line_wv in line_wvs], -ispec - 0.4, -ispec - 0.2, color='g', lw=1)
+                        ax.vlines(line_wvs, -i_spec - 0.4, -i_spec - 0.2, color='b', lw=1)
+                        ax.vlines([line_wv * (1 + (rv0 / c_)) for line_wv in line_wvs], -i_spec - 0.4, -i_spec - 0.2, color='g', lw=1)
 
                 if print_info:
                     info = f"init rv: {rv0:.0f} km/s  "
