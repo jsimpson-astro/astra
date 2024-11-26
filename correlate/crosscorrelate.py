@@ -1,5 +1,5 @@
 from astra.utils import calculate_vpx, taper_spec
-from astra.utils.helpers import dummy_pbar, xcheck_spectra, check_vbinned, automask
+from astra.utils._helpers import *
 
 import warnings
 import numpy as np
@@ -191,188 +191,7 @@ def xcor_standard(
 
 def xcorrelate(
     obs: list[np.ndarray[float]],
-    template: np.ndarray[float],
-    mask: np.ndarray[bool] | list[float] | None = None,
-    shifts: tuple[int, int] = (-10, 10),
-    initial_shifts: list[int] | None = None,
-    taper: float = 0.,
-    xcor_func: callable = xcor_standard,
-    progress: bool = True,
-    _skip_checks: bool = False
-) -> np.ndarray:
-    """
-    Perform cross-correlation over a series of observed spectra,
-    against the given template spectrum.
-    All spectra should be in the same wavelength scale, binned into
-    uniform velocity bins - otherwise results may be meaningless.
-
-    Masking is performed according to the provided mask (optional), which
-    may be a list of bounds to exclude, or a boolean array.
-    Note that masking is also applied where fluxes == np.nan and where errors < 0.
-
-    Parameters:
-    obs: list of numpy.ndarray
-        List of arrays of observed spectra.
-        All spectra must have identical wavelength scales. Each spectrum should have two,
-        or optionally three columns: wavelength, flux, and flux error.
-        Additional columns will be ignored.
-    template: numpy.ndarray
-        Template spectrum - must have identical wavelength scale as the observed spectra.
-        Should have two columns: wavelength and flux.
-        Additional columns will be ignored. It is assumed noise is dominated by observed spectra.
-    mask: numpy.ndarray, list of tuples of floats, or None, default None
-        Wavelength mask, optional. If provided, can either be a boolean array the same size as
-        the wavelengths of the observed spectra and template, or a list of 2-tuples defining
-        upper and lower bounds to exclude.
-    shifts: tuple of ints, length 2
-        Tuple of pixel shifts, (negative, positive), where shifts[1] > shifts[0]
-    initial_shifts: list of ints or None, default None
-        Initial pixel shifts for correlation. Must have the same length as obs.
-    taper: float, default 0.
-        From 0 to 1, fraction to taper from ends of the flux of both observed spectra and template.
-    xcor_func: callable, default xcor_standard
-        Function for computing the cross-correlation between two spectra, with the form:
-
-        xcor_func(flux1: numpy.ndarray[float],
-                  flux2: numpy.ndarray[float],
-                  flux1_err: numpy.ndarray[float] | None = None,
-                  mask: numpy.ndarray[bool] | None = None,
-                  shifts: tuple[int, int] = None
-                  ) -> float, float
-
-        which returns the maximum cross-correlation shift (in pixels) and its error (in pixels).
-    progress: bool, default True
-        Controls display of tqdm progress bar, optional. False to disable
-
-    Returns:
-    xcor_result: numpy.ndarray
-        A 2D array of measured radial velocities and their errors.
-        Two columns, one row per observed spectrum.
-
-    """
-    if not _skip_checks:
-        # check spectra match
-        try:
-            obs_w_errors, templ_w_errors = xcheck_spectra(obs, [template])
-        except Exception as e:
-            msg = e.args[0].replace('spectra1', 'obs').replace('spectra2', 'template')
-            raise type(e)(msg, *e.args[1:])
-
-        obs_wvs = obs[0][:, 0]
-
-        if not check_vbinned(obs_wvs):
-            warnings.warn("Spectra not uniform in velocity space - results may be meaningless.", RuntimeWarning)
-
-        n_obs = len(obs)
-
-        # check shift tuple
-        if not (isinstance(shifts[0], (np.integer, int))
-                and isinstance(shifts[1], (np.integer, int))):
-            raise TypeError("shifts must be given as ints")
-        if not shifts[0] < shifts[1]:
-            raise ValueError(f"shifts[0] ({shifts[0]}) must be less than shifts[1] ({shifts[1]})")
-
-        # check initial shifts if provided, including bounds
-        if initial_shifts is not None:
-            if len(initial_shifts) != len(obs):
-                raise IndexError("initial_shifts must have the same length as obs.")
-            for initial_shift in initial_shifts:
-                if not isinstance(initial_shift, (np.integer, int)):
-                    raise TypeError("initial_shifts must be given as ints")
-                if any(abs(s + initial_shift) > obs_wvs.size // 2 for s in shifts):
-                    raise IndexError(f"shifts ({shifts}, {initial_shift}) out of bounds"
-                                     f"for wavelengths with size {obs_wvs.size}")
-
-        # check taper
-        if taper > 1:
-            raise ValueError(f"taper fraction cannot exceed 1 (taper={taper})")
-        if taper > 0.5:
-            warnings.warn(f"Warning: taper > 0.5 ({taper}), tapering will overlap in centre of spectra", RuntimeWarning)
-
-        # check func
-        if not callable(xcor_func):
-            raise TypeError(f"xcor_func {xcor_func} is not callable.")
-    else:
-        obs_w_errors = True if obs[0].shape[1] > 2 else False
-        templ_w_errors = True if template.shape[1] > 2 else False
-        obs_wvs = obs[0][:, 0]
-        n_obs = len(obs)
-
-    # check and apply mask (convert to boolean mask)
-    mask_ = automask(obs_wvs, mask)
-
-    initial_shifts = [0] * n_obs if initial_shifts is None else initial_shifts
-
-    # calculate average velocity using first spectrum
-    v_avg = calculate_vpx(obs_wvs)
-
-    if taper > 0.:
-        obs_data = [taper_spec(s, taper) for s in obs]
-        template_ = taper_spec(template, taper)
-    else:
-        obs_data = obs
-        template_ = template
-
-    if taper > 0.:
-        # clip to edges of mask, and scale taper so same % of spectrum cut
-        idx0, idx1 = mask_.argmax(), len(mask_) - mask_[::-1].argmax()
-        taper_scaled = taper * obs_wvs.size / (idx1 - idx0)
-
-        obs_data = [None] * n_obs
-        for i, s in enumerate(obs):
-            obs_data[i] = s.copy()
-            obs_data[i][idx0:idx1] = taper_spec(s[idx0:idx1], taper_scaled)
-
-        template_ = template.copy()
-        template_[idx0:idx1] = taper_spec(template_[idx0:idx1], taper_scaled)
-    else:
-        obs_data = obs
-        template_ = template
-
-    # disable progress bar if requested by replacing with dummy class that does nothing
-    pbar_manager = tqdm if progress else dummy_pbar
-
-    with pbar_manager(desc='xcor: ', total=n_obs) as pbar:
-
-        t_wvs, t_flux = template_[:, 0], template_[:, 1]
-
-        # mask out any nans
-        t_mask_ = (mask_ & ~np.isnan(t_flux))
-
-        rvs, rv_errs = np.zeros(n_obs), np.zeros(n_obs)
-
-        for i_obs, obs in enumerate(obs_data):
-
-            initial_shift = initial_shifts[i_obs]
-
-            obs_wvs, obs_flux = obs[:, 0], obs[:, 1]
-            obs_flux_err = obs[:, 2] if obs_w_errors else None
-
-            # mask out any nans
-            obs_mask_ = (t_mask_ & ~np.isnan(obs_flux))
-            obs_mask_ = (obs_mask_ & (obs_flux_err >= 0)) if obs_w_errors else obs_mask_
-
-            # perform xcor
-
-            shifts_ = (shifts[0] + initial_shift, shifts[1] + initial_shift)
-
-            max_loc, max_loc_error = xcor_func(obs_flux, t_flux, obs_flux_err, obs_mask_, shifts_)
-            # max_loc = max_loc + shifts[0] + initial_shift
-            rv, rv_err = v_avg * max_loc, v_avg * max_loc_error
-
-            # save results to arrays
-            rvs[i_obs], rv_errs[i_obs] = rv, rv_err
-
-            pbar.update(1)
-
-        xcor_result = np.vstack([rvs, rv_errs]).T
-
-    return xcor_result
-
-
-def xcorrelate_multi(
-    obs: list[np.ndarray[float]],
-    templates: list[np.ndarray[float]],
+    templ: np.ndarray[float] | list[np.ndarray[float]],
     mask: np.ndarray[bool] | list[float] | None = None,
     shifts: tuple[int, int] = (-10, 10),
     initial_shifts: list[int] | None = None,
@@ -396,8 +215,8 @@ def xcorrelate_multi(
         All spectra must have identical wavelength scales. Each spectrum should have two,
         or optionally three columns: wavelength, flux, and flux error.
         Additional columns will be ignored.
-    templates: list of numpy.ndarray
-        List of arrays of template spectra.
+    templ: numpy.ndarray or list of numpy.ndarray
+        Array or list of arrays of template spectra. If list, a list of results is returned.
         All spectra must have identical wavelength scales, which match the observed spectra.
         Each spectrum should have two columns: wavelength and flux.
         Additional columns will be ignored. It is assumed noise is dominated by observed spectra.
@@ -426,11 +245,14 @@ def xcorrelate_multi(
         Controls display of tqdm progress bar, optional. False to disable
 
     Returns:
-    xcor_results: list of numpy.ndarrays
-        A list of 2D arrays, one per template, each containing a radial velocity curve.
+    xcor_results: numpy.ndarray or list of numpy.ndarray
+        2D arrays, one per template, each containing a radial velocity curve.
         Two columns (radial velocity + errors), one row per observed spectrum.
+        If a single template is provided, only a single 2D array is returned.
 
     """
+
+    templates = [templ] if isinstance(templ, np.ndarray) else templ
 
     # check spectra match
     try:
@@ -479,6 +301,9 @@ def xcorrelate_multi(
 
     initial_shifts = [0] * n_obs if initial_shifts is None else initial_shifts
 
+    # calculate average velocity using first spectrum
+    v_avg = calculate_vpx(obs_wvs)
+
     if taper > 0.:
         # clip to edges of mask, and scale taper so same % of spectrum cut
         idx0, idx1 = mask_.argmax(), len(mask_) - mask_[::-1].argmax()
@@ -502,25 +327,111 @@ def xcorrelate_multi(
 
     xcor_results = [None] * n_templ
 
-    with pbar_manager(desc='xcor: ', total=n_templ) as pbar:
+    with pbar_manager(desc='xcor: ', total=n_obs * n_templ) as pbar:
 
-        for i_templ, template in enumerate(templ_data):
+        for i_templ, t in enumerate(templ_data):
 
-            # run xcorrelate individual template function, skip tapering and disable pbar
-            # do not run checks (already done here)
-            xcor_result = xcorrelate(obs=obs_data,
-                                     template=template,
-                                     mask=mask_,
-                                     shifts=shifts,
-                                     initial_shifts=initial_shifts,
-                                     taper=0,
-                                     xcor_func=xcor_func,
-                                     progress=False,
-                                     _skip_checks=True)
+            t_wvs, t_flux = t[:, 0], t[:, 1]
 
-            pbar.update(1)
+            # mask out any nans
+            t_mask_ = (mask_ & ~np.isnan(t_flux))
+
+            xcor_result = np.zeros((n_obs, 2))
+
+            for i_obs, o in enumerate(obs_data):
+
+                initial_shift = initial_shifts[i_obs]
+
+                obs_wvs, obs_flux = o[:, 0], o[:, 1]
+                obs_flux_err = o[:, 2] if obs_w_errors else None
+
+                # mask out any nans
+                obs_mask_ = (t_mask_ & ~np.isnan(obs_flux))
+                obs_mask_ = (obs_mask_ & (obs_flux_err >= 0)) if obs_w_errors else obs_mask_
+
+                # perform xcor
+
+                shifts_ = (shifts[0] + initial_shift, shifts[1] + initial_shift)
+
+                max_loc, max_loc_error = xcor_func(obs_flux, t_flux, obs_flux_err, obs_mask_, shifts_)
+
+                rv, rv_err = v_avg * max_loc, v_avg * max_loc_error
+
+                # save results to arrays
+                xcor_result[i_obs] = rv, rv_err
+
+                pbar.update(1)
 
             # add result data
             xcor_results[i_templ] = xcor_result
 
-    return xcor_results
+    # return list of arrays if list of templates provided, else single array
+    return xcor_results[0] if isinstance(templ, np.ndarray) else xcor_results
+
+
+#### legacy ####
+
+@deprecated_("astra.correlate.xcorrelate_multi has been superceded by astra.correlate.xcorrelate.")
+def xcorrelate_multi(
+    obs: list[np.ndarray[float]],
+    templ: np.ndarray[float] | list[np.ndarray[float]],
+    mask: np.ndarray[bool] | list[float] | None = None,
+    shifts: tuple[int, int] = (-10, 10),
+    initial_shifts: list[int] | None = None,
+    taper: float = 0.,
+    xcor_func: callable = xcor_standard,
+    progress: bool = True
+) -> list[np.ndarray]:
+    """
+    Perform cross-correlation over a series of observed spectra,
+    iterating over all given template spectra.
+    All spectra should be in the same wavelength scale, binned into
+    uniform velocity bins - otherwise results may be meaningless.
+
+    Masking is performed according to the provided mask (optional), which
+    may be a list of bounds to exclude, or a boolean array.
+    Note that masking is also applied where fluxes == np.nan and where errors < 0.
+
+    Parameters:
+    obs: list of numpy.ndarray
+        List of arrays of observed spectra.
+        All spectra must have identical wavelength scales. Each spectrum should have two,
+        or optionally three columns: wavelength, flux, and flux error.
+        Additional columns will be ignored.
+    templ: numpy.ndarray or list of numpy.ndarray
+        Array or list of arrays of template spectra. If list, a list of results is returned.
+        All spectra must have identical wavelength scales, which match the observed spectra.
+        Each spectrum should have two columns: wavelength and flux.
+        Additional columns will be ignored. It is assumed noise is dominated by observed spectra.
+    mask: numpy.ndarray, list of tuples of floats, or None, default None
+        Wavelength mask, optional. If provided, can either be a boolean array the same size as
+        the wavelengths of the observed and template spectra, or a list of 2-tuples defining
+        upper and lower bounds to exclude.
+    shifts: tuple of ints, length 2
+        Tuple of pixel shifts, (negative, positive), where shifts[1] > shifts[0]
+    initial_shifts: list of ints or None, default None
+        Initial pixel shifts for correlation. Must have the same length as obs.
+    taper: float, default 0.
+        From 0 to 1, fraction to taper from ends of the flux of both observed and template spectra.
+    xcor_func: callable, default xcor_standard
+        Function for computing the cross-correlation between two spectra, with the form:
+
+        xcor_func(flux1: numpy.ndarray[float],
+                  flux2: numpy.ndarray[float],
+                  flux1_err: numpy.ndarray[float] | None = None,
+                  mask: numpy.ndarray[bool] | None = None,
+                  shifts: tuple[int, int] = None
+                  ) -> float, float
+
+        which returns the maximum cross-correlation shift (in pixels) and its error (in pixels).
+    progress: bool, default True
+        Controls display of tqdm progress bar, optional. False to disable
+
+    Returns:
+    xcor_results: numpy.ndarray or list of numpy.ndarray
+        2D arrays, one per template, each containing a radial velocity curve.
+        Two columns (radial velocity + errors), one row per observed spectrum.
+        If a single template is provided, only a single 2D array is returned.
+
+    """
+    return xcorrelate(obs, templ, mask, shifts, initial_shifts, taper, xcor_func, progress)

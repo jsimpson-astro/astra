@@ -1,1 +1,1 @@
-from .crosscorrelate import xcorrelate, xcorrelate_multi
+from .crosscorrelate import xcorrelate
