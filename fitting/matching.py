@@ -1,5 +1,5 @@
 from astra.utils.utils import _mask_interp
-from astra.utils.helpers import dummy_pbar, xcheck_spectra, check_vbinned, automask
+from astra.utils._helpers import *
 
 import warnings
 import numpy as np
@@ -95,103 +95,8 @@ def optsub_standard(
 
 
 def optsub(
-    obs: np.ndarray[float],
-    templates: list[np.ndarray[float]],
-    mask: np.ndarray[float] | list[tuple[float, float]] | None = None,
-    progress: bool = True,
-    _skip_checks: bool = False,
-) -> np.ndarray[float]:
-    """
-    Perform optimal subtraction using the standard method.
-    Optimal subtraction is performed for the given observed spectrum,
-    iterating over all given template spectra.
-    All spectra should be in the same wavelength scale, binned into
-    uniform velocity bins - otherwise results may be meaningless.
-    Any systemic radial velocities should be removed also (see sincshift).
-
-    Masking is performed according to the provided mask (optional), which
-    may be a list of bounds to exclude, or a boolean array.
-    Note that masking is also applied where fluxes == np.nan and where errors < 0.
-
-    Parameters:
-    obs: np.ndarray
-        Array of the observed spectrum.
-        Spectrum should have two, or optionally three columns: wavelength, flux, and flux error.
-        Additional columns will be ignored.
-    templates: list of np.ndarray
-        List of arrays of template spectra.
-        All spectra must have identical wavelength scales, which match the observed spectra.
-        Each spectrum should have two columns: wavelength and flux.
-        Additional columns will be ignored. It is assumed noise is dominated by observed spectra.
-    mask: numpy.ndarray, list of tuples of floats, or None, default None
-        Wavelength mask, optional. If provided, can either be a boolean array matching the
-        observed and template spectra, or a list of 2-tuples defining upper and lower bounds to exclude.
-    progress: bool, default True
-        Controls display of tqdm progress bar, optional. False to disable
-
-    Returns:
-    optsub_results: np.ndarray
-        Output array containing optsub results, 3 columns, one row per template spectrum.
-        Columns are chi-squared of subtraction, optimal subtraction factor, and error on the factor.
-
-    """
-
-    if not _skip_checks:
-        # check spectra match
-        try:
-            obs_w_errors, templ_w_errors = xcheck_spectra([obs], templates)
-        except Exception as e:
-            msg = e.args[0].replace('spectra1', 'obs').replace('spectra2', 'template')
-            raise type(e)(msg, *e.args[1:])
-    else:
-        obs_w_errors = True if obs.shape[1] > 2 else False
-        templ_w_errors = True if templates[0].shape[1] > 2 else False
-
-    n_templ = len(templates)
-    obs_wvs = obs[:, 0]
-
-    # check and apply mask (convert to boolean mask)
-    mask_ = automask(obs_wvs, mask)
-
-    # disable progress bar if requested by replacing with dummy class that does nothing
-    pbar_manager = tqdm if progress else dummy_pbar
-
-    with pbar_manager(desc='optsub: ', total=n_templ) as pbar:
-
-        obs_wvs, obs_flux = obs[:, 0], obs[:, 1]
-        obs_flux_err = obs[:, 2] if obs_w_errors else None
-
-        # mask out any nans
-        obs_mask_ = (mask_ & ~np.isnan(obs_flux))
-        obs_mask_ = (obs_mask_ & (obs_flux_err >= 0)) if obs_w_errors else obs_mask_
-
-        chisq_array, factor_array, factor_err_array = np.zeros(n_templ), np.zeros(n_templ), np.zeros(n_templ)
-
-        for i_templ, template in enumerate(templates):
-
-            t_wvs, t_flux = template[:, 0], template[:, 1]
-
-            # mask out any nans
-            t_mask_ = (obs_mask_ & ~np.isnan(t_flux))
-
-            # perform optsub
-            chisq, factor, factor_err, dof = optsub_standard(obs_flux, t_flux, obs_flux_err, t_mask_)
-
-            # save results to arrays
-            chisq_array[i_templ] = chisq
-            factor_array[i_templ], factor_err_array[i_templ] = factor, factor_err
-
-            pbar.update(1)
-
-        # add result data
-        optsub_result = np.vstack([chisq_array, factor_array, factor_err_array]).T
-
-    return optsub_result
-
-
-def optsub_multi(
-    obs: list[np.ndarray[float]],
-    templates: list[np.ndarray[float]],
+    obs: np.ndarray[float] | list[np.ndarray[float]],
+    templ: list[np.ndarray[float]],
     mask: np.ndarray[float] | list[tuple[float, float]] | None = None,
     progress: bool = True,
 ) -> np.ndarray[float]:
@@ -208,12 +113,12 @@ def optsub_multi(
     Note that masking is also applied where fluxes == np.nan and where errors < 0.
 
     Parameters:
-    obs: list of np.ndarray
-        Arrays of the observed spectra.
+    obs: np.ndarray or list of np.ndarray
+        Array or list of arrays of the observed spectra. If list, a list of results is returned.
         All spectra must have identical wavelength scales.
         Spectra should have two, or optionally three columns: wavelength, flux, and flux error.
         Additional columns will be ignored.
-    templates: list of np.ndarray
+    templ: list of np.ndarray
         List of arrays of template spectra.
         All spectra must have identical wavelength scales, which match the observed spectra.
         Each spectrum should have two columns: wavelength and flux.
@@ -225,21 +130,24 @@ def optsub_multi(
         Controls display of tqdm progress bar, optional. False to disable
 
     Returns:
-    optsub_results: np.ndarray
-        Output array containing optsub results, 3 columns, one row per template spectrum.
+    optsub_results: np.ndarray or list of np.ndarray
+        Output array, or list of arrays, containing optsub results, 3 columns, one row per template spectrum.
         Columns are chi-squared of subtraction, optimal subtraction factor, and error on the factor.
+        If a single observed spectrum is provided, a single results array is returned.
 
     """
+    obs_ = [obs] if isinstance(obs, np.ndarray) else obs
 
     # check spectra match
     try:
-        obs_w_errors, templ_w_errors = xcheck_spectra(obs, templates)
+        obs_w_errors, templ_w_errors = xcheck_spectra(obs_, templ)
     except Exception as e:
         msg = e.args[0].replace('spectra1', 'obs').replace('spectra2', 'template')
         raise type(e)(msg, *e.args[1:])
 
-    n_obs = len(obs)
-    obs_wvs = obs[0][:, 0]
+    n_obs = len(obs_)
+    n_templ = len(templ)
+    obs_wvs = obs_[0][:, 0]
 
     if not check_vbinned(obs_wvs):
         warnings.warn("Spectra not uniform in velocity space - results may be meaningless.", RuntimeWarning)
@@ -252,18 +160,83 @@ def optsub_multi(
 
     optsub_results = [None] * n_obs
 
-    with pbar_manager(desc='optsub: ', total=n_obs) as pbar:
+    with pbar_manager(desc='optsub: ', total=n_obs * n_templ) as pbar:
 
-        for i_obs, obs_spec in enumerate(obs):
+        for i_obs, o in enumerate(obs_):
 
-            optsub_result = optsub(obs=obs_spec,
-                                   templates=templates,
-                                   mask=mask_,
-                                   progress=False,
-                                   _skip_checks=True)
+            obs_wvs, obs_flux = o[:, 0], o[:, 1]
+            obs_flux_err = o[:, 2] if obs_w_errors else None
+
+            # mask out any nans
+            obs_mask_ = (mask_ & ~np.isnan(obs_flux))
+            obs_mask_ = (obs_mask_ & (obs_flux_err >= 0)) if obs_w_errors else obs_mask_
+
+            optsub_result = np.zeros((n_templ, 3))
+
+            for i_templ, t in enumerate(templ):
+
+                t_wvs, t_flux = t[:, 0], t[:, 1]
+
+                # mask out any nans
+                t_mask_ = (obs_mask_ & ~np.isnan(t_flux))
+
+                # perform optsub
+                chisq, factor, factor_err, dof = optsub_standard(obs_flux, t_flux, obs_flux_err, t_mask_)
+
+                # save results to array
+                optsub_result[i_templ] = chisq, factor, factor_err
+
+                pbar.update(1)
 
             optsub_results[i_obs] = optsub_result
 
-            pbar.update(1)
+    return optsub_results[0] if isinstance(obs, np.ndarray) else optsub_results
 
-    return optsub_results
+
+#### legacy ####
+
+@deprecated_("astra.fitting.optsub_multi has been superceded by astra.fitting.optsub.")
+def optsub_multi(
+    obs: np.ndarray[float] | list[np.ndarray[float]],
+    templ: list[np.ndarray[float]],
+    mask: np.ndarray[float] | list[tuple[float, float]] | None = None,
+    progress: bool = True,
+) -> np.ndarray[float]:
+    """
+    Perform optimal subtraction using the standard method.
+    Optimal subtraction is performed for each observed spectrum,
+    iterating over all given template spectra.
+    All spectra should be in the same wavelength scale, binned into
+    uniform velocity bins - otherwise results may be meaningless.
+    Any systemic radial velocities should be removed also (see sincshift).
+
+    Masking is performed according to the provided mask (optional), which
+    may be a list of bounds to exclude, or a boolean array.
+    Note that masking is also applied where fluxes == np.nan and where errors < 0.
+
+    Parameters:
+    obs: np.ndarray or list of np.ndarray
+        Array or list of arrays of the observed spectra. If list, a list of results is returned.
+        All spectra must have identical wavelength scales.
+        Spectra should have two, or optionally three columns: wavelength, flux, and flux error.
+        Additional columns will be ignored.
+    templ: list of np.ndarray
+        List of arrays of template spectra.
+        All spectra must have identical wavelength scales, which match the observed spectra.
+        Each spectrum should have two columns: wavelength and flux.
+        Additional columns will be ignored. It is assumed noise is dominated by observed spectra.
+    mask: numpy.ndarray, list of tuples of floats, or None, default None
+        Wavelength mask, optional. If provided, can either be a boolean array matching the
+        observed and template spectra, or a list of 2-tuples defining upper and lower bounds to exclude.
+    progress: bool, default True
+        Controls display of tqdm progress bar, optional. False to disable
+
+    Returns:
+    optsub_results: np.ndarray or list of np.ndarray
+        Output array, or list of arrays, containing optsub results, 3 columns, one row per template spectrum.
+        Columns are chi-squared of subtraction, optimal subtraction factor, and error on the factor.
+        If a single observed spectrum is provided, a single results array is returned.
+
+    """
+
+    return optsub(obs, templ, mask, progress)
