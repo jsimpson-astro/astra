@@ -362,6 +362,7 @@ def f77_replace(flux, mask):
 
     return flux_i
 
+@deprecated_("f77_sincshift is pending depreciation. Use astra.utils.sincshift instead.")
 def f77_sincshift(wvs: np.ndarray, 
                   flux: np.ndarray, 
                   flux_err: np.ndarray | None = None, 
