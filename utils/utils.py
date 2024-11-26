@@ -3,10 +3,11 @@ __all__ = [
     'calculate_vpx',
     'mask_interp',
     'average_spec',
-    'phase_average'
+    'phase_average',
+    'sincshift'
 ]
 
-from astra.utils._helpers import check_spectra
+from astra.utils._helpers import check_spectra, check_vbinned
 
 import numpy as np
 import warnings
@@ -300,3 +301,131 @@ def phase_average(
         out[i] = average_spec(to_bin)
 
     return out
+
+
+def sincshift(
+    spec: np.ndarray[float],
+    vshift: float = 0.,
+    pad: float = np.nan
+) -> np.ndarray[float]:
+    """
+    Shift the flux (and error) of a spectrum by a given velocity, in km/s.
+    Rebinning is done with a sinc rebinning method.
+    This convolves a windowed sinc function with the spectrum.
+    The window is defined as:
+
+    f(x) = 4/3 - 8 (x-1) x^2    0.0 < x <= 0.5
+         = 8/3 (1-x)^3          0.5 < x < 1.0
+
+    Parameters:
+    spec: numpy.ndarray
+        Spectrum to shift
+    vshift: float, default 0.
+        Velocity shift to apply to spectrum, in km/s
+    pad: float, default np.nan.
+        Value to fill padded fluxes with, optional
+
+    Returns:
+    spec_shifted: np.ndarray
+        Spectrum, rebinned with velocity shift applied to flux and any errors.
+
+    """
+
+    errors = check_spectra([spec])
+
+    wvs, flux = spec[:, 0], spec[:, 1]
+    flux_err = spec[:, 2] if errors else None
+
+    if not check_vbinned(wvs):
+        warnings.warn("Spectra not uniform in velocity space.", RuntimeWarning)
+
+    maxsinc = 15
+    v_avg = c_ * (np.exp(np.log(wvs.max() / wvs.min()) / (wvs.size - 1)) - 1)
+
+    # compute pixel shift, separate into integer (rounded) and decimal parts
+    pxshift = -np.log(1 + vshift / c_) / np.log(1 + v_avg / c_)  # px shift
+    nshift, subpxshift = int(pxshift), pxshift - int(pxshift)
+
+    # compute sinc function, shifted by the decimal part of the shift (xshift)~
+    x1 = np.pi * (subpxshift - np.arange(-maxsinc, maxsinc + 1))
+    x2 = np.abs((subpxshift - np.arange(-maxsinc, maxsinc + 1)) / (maxsinc + 0.5))
+    sinc = np.zeros(2 * maxsinc + 1)
+
+    # use taylor series approx at small x1 (avoid div/0)
+    x1_mask = (np.abs(x1) < 1e-4)
+    sinc[x1_mask] = 1 - (x1[x1_mask]**2) / 6
+    sinc[~x1_mask] = np.sin(x1[~x1_mask]) / x1[~x1_mask]
+
+    # apply window to sinc function
+    x2_mask = (x2 <= 0.5)
+    sinc[x2_mask] = sinc[x2_mask] * (4 / 3 + 8 * (x2[x2_mask] - 1) * x2[x2_mask]**2)
+    sinc[~x2_mask] = sinc[~x2_mask] * 8 / 3 * (1 - x2[~x2_mask])**3
+
+    sinc = sinc / sinc.sum()
+
+    # now do convolution, depending on nshift
+    if nshift < 0:
+        # pad fluxes with end values for convolution, which will be removed with mode='valid'
+        flux_padded = np.r_[flux[0] * np.ones(maxsinc),
+                            flux[:nshift + maxsinc if nshift + maxsinc < 0 else None],
+                            flux[-1] * np.ones(max(nshift + maxsinc, 0))]
+
+        # convolve, reversing sinc function as numpy reverses the shorter array
+        flux_shifted = np.convolve(flux_padded, sinc[::-1], mode='valid')
+        # pad zeros where fluxes have been shifted away
+        flux_shifted = np.r_[np.zeros(-nshift) + pad, flux_shifted]
+
+        # repeat for errors
+        if flux_err is not None:
+            flux_err_padded = np.r_[flux_err[0] * np.ones(maxsinc),
+                                    flux_err[:nshift + maxsinc if nshift + maxsinc < 0 else None],
+                                    flux_err[-1] * np.ones(max(nshift + maxsinc, 0))]
+
+            flux_err_shifted = np.convolve(flux_err_padded, sinc[::-1], mode='valid')
+            flux_err_shifted = np.r_[np.zeros(-nshift) + pad, flux_err_shifted]
+        else:
+            flux_err_shifted = np.zeros_like(flux_shifted) + pad
+
+    elif nshift > 0:
+        # pad fluxes with end values for convolution, which will be removed with mode='valid'
+        flux_padded = np.r_[flux[0] * np.ones(max(maxsinc - nshift, 0)),
+                            flux[max(nshift - maxsinc, 0):],
+                            flux[-1] * np.ones(maxsinc)]
+
+        # convolve, reversing sinc function as numpy reverses the shorter array
+        flux_shifted = np.convolve(flux_padded, sinc[::-1], mode='valid')
+        # pad zeros where fluxes have been shifted away
+        flux_shifted = np.r_[flux_shifted, np.zeros(nshift) + pad]
+
+        # repeat for errors
+        if flux_err is not None:
+            flux_err_padded = np.r_[flux_err[0] * np.ones(max(maxsinc - nshift, 0)),
+                                    flux_err[max(nshift - maxsinc, 0):],
+                                    flux_err[-1] * np.ones(maxsinc)]
+
+            flux_err_shifted = np.convolve(flux_err_padded, sinc[::-1], mode='valid')
+            flux_err_shifted = np.r_[flux_err_shifted, np.zeros(nshift) + pad]
+        else:
+            flux_err_shifted = np.zeros_like(flux_shifted) + pad
+
+    else:
+        # pad fluxes with end values for convolution, which will be removed with mode='valid'
+        flux_padded = np.r_[flux[0] * np.ones(maxsinc), flux, flux[-1] * np.ones(maxsinc)]
+        # convolve, reversing sinc function as numpy reverses the shorter array
+        flux_shifted = np.convolve(flux_padded, sinc[::-1], mode='valid')
+
+        # repeat for errors
+        if flux_err is not None:
+            flux_err_padded = np.r_[flux_err[0] * np.ones(maxsinc),
+                                    flux_err, flux_err[-1] * np.ones(maxsinc)]
+
+            flux_err_shifted = np.convolve(flux_err_padded, sinc[::-1], mode='valid')
+        else:
+            flux_err_shifted = np.zeros_like(flux_shifted) + pad
+
+    spec_shifted = spec.copy()
+    spec_shifted[:, 1] = flux_shifted
+    if errors:
+        spec_shifted[:, 2] = flux_err_shifted
+
+    return spec_shifted
