@@ -50,8 +50,29 @@ def ew(
     spec: np.ndarray[float] | list[np.ndarray[float]],
     mask: np.ndarray[bool] | list[float] | None = None,
     continuum: np.ndarray[float] | float = 1.,
-) -> np.ndarray[float] | list[np.ndarray[float]]:
+) -> np.ndarray[float]:
     """
+    Calculates equivalent width over a spectrum or spectra, within a mask.
+
+    Parameters:
+    spec: numpy.ndarray or list of numpy.ndarray
+        Spectrum or list of spectra to compute equivalent widths over.
+        Each spectrum should have two, or optionally three columns: wavelength, flux, and flux error.
+        Additional columns will be ignored.
+    mask: numpy.ndarray, list of tuples of floats, optional
+        Wavelength mask, optional. If provided, can either be a boolean array matching the spectra,
+        or a list of 2-tuples defining upper and lower bounds to exclude.
+        If `mask` is a boolean array, all spectra must have the same lengths.
+    continuum: numpy.ndarray or float, default 1.
+        Continuum level of spectra, either as an array matching the spectra, or a single value.
+        If `continuum` is an array, all spectra must have the same lengths.
+
+    Returns:
+    ew_array: numpy.ndarray
+        2D array of equivalent widths and errors, one row per spectrum in `spec`.
+        EW units are the same as the wavelength axis of the spectra.
+        If no errors are present in spectra, EW errors will be np.nan.
+
     """
 
     spec_ = [spec] if isinstance(spec, np.ndarray) else spec
@@ -73,10 +94,17 @@ def ew(
     # if mask/continuum are boolean arrays, need to check they match spectra
     # if spectra have varying shapes, raise error
     if shapes_match:
-        if isinstance(mask, np.ndarray) and mask.shape != spec_[0].shape:
+        if isinstance(mask, np.ndarray) and mask.shape != spec_[0][:, 0].shape:
             raise IndexError("If `mask` is an array, it must match the number of points of all spectra.")
-        if isinstance(continuum, np.ndarray) and continuum.shape != spec_[0].shape:
+        if isinstance(continuum, np.ndarray) and continuum.shape != spec_[0][:, 0].shape:
             raise IndexError("If `continuum` is an array, it must match the number of points of all spectra.")
+
+        # warn for non-matching wavelength scales if using boolean arrays
+        if isinstance(mask, np.ndarray) or isinstance(continuum, np.ndarray):
+            try:
+                check_spectra(spec_)
+            except Exception as e:
+                warnings.warn(e.args[0], RuntimeWarning)
     else:
         if isinstance(mask, np.ndarray):
             raise IndexError("If `mask` is an array, spectra must have identical shapes.")
@@ -116,5 +144,4 @@ def ew(
         # save to arrays
         ews[i_s], ew_errors[i_s] = ew, ew_error
 
-    # return array if list of spectra provided, else single value + error
-    return (ew, ew_error) if isinstance(spec, np.ndarray) else np.vstack([ews, ew_errors]).T
+    return np.vstack([ews, ew_errors]).T
