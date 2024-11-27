@@ -8,16 +8,10 @@ astra also intends to make some older methods still used today easy to access an
 
 ## Installation
 
-To install astra, simply download the source, for example with `git`:
+To install astra, you can simply download and install in one line with `pip`:
 
 ```
-git clone https://github.com/jsimpson-astro/astra.git
-```
-
-Then navigate to the source directory and install it with `pip`:
-
-```
-pip install .
+pip install https://github.com/jsimpson-astro/astra/archive/main.zip
 ```
 
 ## Overview of available methods
