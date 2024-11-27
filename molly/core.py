@@ -1,3 +1,5 @@
+from astra.utils._helpers import deprecated_
+
 import numpy as np
 from scipy.ndimage import gaussian_filter1d
 
@@ -361,6 +363,7 @@ def f77_replace(flux, mask):
             flux_i[sl] = flux[sl.start-1] if sl.start else flux[sl.stop]
 
     return flux_i
+
 
 @deprecated_("f77_sincshift is pending depreciation. Use astra.utils.sincshift instead.")
 def f77_sincshift(wvs: np.ndarray, 
