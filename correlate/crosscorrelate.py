@@ -1,5 +1,5 @@
 from astra.utils import calculate_vpx, taper_spec
-from astra.utils._helpers import *
+from astra.utils._helpers import automask, xcheck_spectra, check_vbinned, deprecated_, dummy_pbar
 
 import warnings
 import numpy as np
