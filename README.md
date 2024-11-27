@@ -6,6 +6,20 @@ astra is designed to be a simple toolbox of various methods used in spectral ana
 
 astra also intends to make some older methods still used today easy to access and maintain, by providing native, well-documented, and Python-optimised versions that are simple to understand. The first methods ported as such come from the Fortran 77 program [molly](https://cygnus.astro.warwick.ac.uk/phsaap/software/molly/html/USER_GUIDE.html) (e.g. `correlate.xcorrelate` and `fitting.optsub`).
 
+## Installation
+
+To install astra, simply download the source, for example with `git`:
+
+```
+git clone https://github.com/jsimpson-astro/astra.git
+```
+
+Then navigate to the source directory and install it with `pip`:
+
+```
+pip install .
+```
+
 ## Overview of available methods
 
 astra is organised into three main sub-modules and two auxiliary sub-modules:
