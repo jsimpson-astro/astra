@@ -53,7 +53,7 @@ def generate_multilines(
     for line_wv, line_height in zip(line_wvs, line_heights):
         line_array += scaled_gauss(wvs,
                                    line_wv * (1 + (rv / c_)),
-                                   line_wv * (fwhm / c_),
+                                   line_wv * (fwhm / c_) / 2.354820045,
                                    line_height
                                    )
 
