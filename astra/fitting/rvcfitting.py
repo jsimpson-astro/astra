@@ -59,7 +59,7 @@ def rvmc(
         raise ValueError("If gamma is fixed, period and t0 must also be fixed.")
 
     n_dim = 1 + sum([int(f) for f in [fit_gamma, fit_t0, fit_period]])
-    fixed_pars = init_pars[n_dim - 4:]
+    fixed_pars = init_pars[n_dim - 4:] if n_dim != 4 else []
 
     init_state = init_pars[:n_dim] + init_scatter[:n_dim] * np.random.uniform(-1, 1, size=(n_walkers, n_dim))
 
