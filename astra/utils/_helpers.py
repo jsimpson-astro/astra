@@ -12,6 +12,9 @@ from typing_extensions import deprecated
 from inspect import signature
 import numpy as np
 
+def deprecated_import(msg):
+    import warnings
+    warnings.warn(msg, DeprecationWarning, stacklevel=3)
 
 def deprecated_(*dep_args, **dep_kwargs):
 
