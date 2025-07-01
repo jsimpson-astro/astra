@@ -1,5 +1,6 @@
 from astra.utils.utils import _mask_interp
-from astra.utils._helpers import automask, xcheck_spectra, check_vbinned, deprecated_, dummy_pbar
+from astra.utils._helpers import automask, xcheck_spectra, check_vbinned, dummy_pbar
+from astra.utils._helpers import deprecated_, deprecated_import
 
 import warnings
 from typing import Callable, TypeAlias
@@ -11,6 +12,8 @@ import emcee
 
 #### backend ####
 
+msg = f"{__name__} is deprecated, use astra.fitting.specfitting instead."
+deprecated_import(msg)
 
 def optsub_standard(
     x1: np.ndarray[float],
