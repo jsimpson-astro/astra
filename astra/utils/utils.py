@@ -190,11 +190,12 @@ def average_spec(spec: list[np.ndarray[float]]) -> np.ndarray[float]:
     # if errors present, weight averages
     if errors:
         flux_errors = np.array([s[:, 2] for s in spec])
-        flux_errors_ma = np.ma.MaskedArray(flux_errors, mask=np.isnan(flux_errors))
+        flux_errors_ma = np.ma.MaskedArray(flux_errors, mask=(np.isnan(flux_errors) | (flux_errors < 0)))
 
+        # weighted average, return invalid values (only nans for a given pixel) as nan
         weights = 1 / flux_errors_ma**2
-        flux_avg = np.ma.average(fluxes_ma, weights=weights, axis=0).data
-        flux_errors_avg = np.ma.sqrt(1 / weights.sum(axis=0)).data
+        flux_avg = np.ma.average(fluxes_ma, weights=weights, axis=0).filled(np.nan)
+        flux_errors_avg = np.ma.sqrt(1 / weights.sum(axis=0)).filled(np.nan)
 
         return np.c_[wvs, flux_avg, flux_errors_avg]
     else:
