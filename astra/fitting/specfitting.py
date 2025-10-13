@@ -311,7 +311,7 @@ class SpectrumInterpolator:
         point1d = pars[self._dims[0]]
 
         if point1d in points1d:
-            return self._spec[points1d == point1d]
+            return self._spec[points1d == point1d][0]
 
         idxs = np.arange(len(points1d))
         mask_lower = (points1d <= point1d)
@@ -411,7 +411,8 @@ class SpectrumInterpolator:
             elif len(args) == 0:
                 # no args, just check kwargs
                 params = [kwargs.get(p) for p in self._spec_param_names]
-                missing = [p for p in params if p is None]
+                missing = [p for p in self._spec_param_names if kwargs.get(p) is None]
+                #missing = [p for p in self._spec_param_names if p is None]
                 if len(missing) > 0:
                     raise KeyError(f"Missing parameters: {missing}")
             elif len(args) > len(self._spec_param_names):
@@ -491,32 +492,20 @@ def scaled_spec(pars, radius, distance, interp):
     spec = (2.254610138e-8 * (radius / distance))**2 * spec
     return spec
 
-# def scaled_bb(teff, radius, distance, wvs):
-#     wav = wvs * 1e-10
-#     bb = (1.1910429723971884e-16 / wav**5) / (np.exp(0.014387768775039337 / (wav * teff)) - 1)
-#     bb_spec = ((2.254610138e-8 * (radius / distance))**2 * bb) / 1e7
-#     return bb_spec
-
 def bg_ones(wvs, flux):
     return np.ones_like(flux)
 
 def bg_flat(wvs, flux):
     return np.ones_like(flux) * np.quantile(flux, 0.995)
 
-def bg_blackbody(wvs, flux, A, teff):
+def bg_blackbody(wvs, flux, teff, radius, distance):
     wav = wvs * 1e-10
     bb = (1.1910429723971884e-16 / wav**5) / (np.exp(0.014387768775039337 / (wav * teff)) - 1)
-    bb_spec = A * bb
+    bb_spec = ((2.254610138e-8 * (radius / distance))**2 * bb) / 1e7
     return bb_spec
 
-# def bg_blackbody(wvs, flux, teff, radius, distance):
-#     wav = wvs * 1e-10
-#     bb = (1.1910429723971884e-16 / wav**5) / (np.exp(0.014387768775039337 / (wav * teff)) - 1)
-#     bb_spec = ((2.254610138e-8 * (radius / distance))**2 * bb) / 1e7
-#     return bb_spec
-
-def bg_blackbody_scaled(wvs, flux, teff, radius, distance):
-    bb = bg_blackbody(wvs, flux, radius, distance)
+def bg_blackbody_scaled(wvs, flux, teff):
+    bb = bg_blackbody(wvs, flux, teff, 1, 1)
     bb = bb * (np.quantile(flux, 0.995) / np.quantile(bb, 0.995))
     return bb
 
@@ -1074,7 +1063,7 @@ class SpectrumFitter:
 
         # raise error if not initialised before run
         # and parameters not given to initialise from
-        if not (self._initialised or (spectrum is not None and init_config is not None)):
+        if not (self.initialised or (spectrum is not None and init_config is not None)):
             if spectrum is None and init_config is None:
                 raise ValueError("Sampler not initialised: please provide `spectrum` and `init_config`.")
             elif spectrum is None:
