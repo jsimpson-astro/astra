@@ -1,13 +1,16 @@
 from astra.utils.utils import _mask_interp
 from astra.utils._helpers import automask, xcheck_spectra, check_vbinned, deprecated_, dummy_pbar
+from astra.fitting.core import BasePrior, UniformPrior, GaussianPrior, _PriorOrPriors
+import astra.fitting.specmodels as specmodels
 
+from typing import Callable
 import warnings
-from typing import Callable, TypeAlias
 import numpy as np
 from tqdm.auto import tqdm
-from scipy import spatial, interpolate
 from scipy.ndimage import gaussian_filter1d
 import emcee
+
+SpectrumInterpolator = specmodels.SpectrumInterpolator
 
 #### backend ####
 
@@ -195,347 +198,26 @@ def optsub(
     return optsub_results[0] if isinstance(obs, np.ndarray) else optsub_results
 
 
-#### interpolator ####
-
-class SpectrumInterpolator:
-    """
-    N-D spectrum interpolator.
-    For a provided grid of spectra and associated parameters, this class can be called to produce
-    a new spectrum at arbitrary parameter within the grid bounds using interpolation.
-    Needed for spectrum fitting.
-
-    Parameters:
-    wvs: np.ndarray
-        Wavelengths to be used for interpolation
-    spec: list of np.ndarray
-        List of 1D flux arrays of model spectra. 
-        Must match length of wvs
-    params: list of tuples of dicts, or numpy.ndarray
-        List of parameters associated to each spectrum.
-        Must have the same length as `spec`.
-        For 1D, a list of floats is accepted.
-        For higher dimensions, a list of tuples (or lists) or np.ndarray is acceptable,
-        but `param_names` must be given if the interpolator is to be used for fitting.
-        Alternatively, a list of dicts with keys for parameter names can be given.
-    param_names: list of str, optional
-        List of parameter names, must match number of paramters in `params`.
-        If `params` is a list of dict, `param_names` is not needed and will be assembled
-        from dict keys in `params`.
-        Must be set if interpolator is to be provided to SpectrumFitter and `params` is 
-        not a list of dict.
-
-    Methods:
-    __call__(*args, **kwargs)
-        Interpolate to the provided parameters.
-        Parameters can either be provided as positional arguments, with the order matching the
-        order of `params` when the class was initialised, or as keyword arguments matching
-        self.param_names, or a mix.
-        Returns interpolated flux at the wavelengths of the input spectra.
-
-    """
-
-    def __init__(
-        self, 
-        wvs: np.ndarray,
-        spec: list[np.ndarray], 
-        params: list[float|list|tuple|dict] | np.ndarray,
-        param_names: list[str] | None = None
-    ):
-
-        # check number of spectra = number of parameters
-        if len(spec) != len(params):
-            raise IndexError(f"Length of spectra list ({len(spec)}) does not match length of parameter list ({len(params)}).")
-        
-        # # check wavelengths all match
-        # if not all(np.all(spec[0][:, 0] == s[:, 0]) for s in spec[1:]):
-        #     raise ValueError("Wavelength scales must be identical for all spectra.")
-        # check all sizes match 
-        if not all(spec[0].shape == s.shape for s in spec[1:]):
-            raise ValueError("All spectra must have identical shapes.")
-        if not all(s.shape == wvs.shape for s in spec):
-            raise IndexError("Shape of wavelength array does not match shape of flux arrays.")
-
-        self._wvs = wvs
-        self._spec = np.array(spec)
-
-        if isinstance(params[0], dict):
-            # check all are dicts and have the same keys
-            for pars in params:
-                assert isinstance(pars, dict)
-                assert pars.keys() == params[0].keys()
-
-            if param_names is not None:
-                raise ValueError("param_names given but parameter names already specified by dicts.")
-
-            self._spec_param_names = tuple(params[0].keys())
-            self._spec_points = np.array([list(pars.values()) for pars in params])
-            self._spec_params = params
-            
-        else:
-            if isinstance(params, np.ndarray) and len(params.shape) == 1:
-                params_ = params[:, None]
-            elif isinstance(params, (list, tuple)) and not hasattr(params[0], '__len__'):
-                params_ = np.array(params)[:, None]
-            else:
-                params_ = params
-                
-            for pars in params_:
-                first_dims = len(params_[0])
-                assert isinstance(pars, (list, tuple, np.ndarray))
-                assert len(pars) == first_dims
-
-            if param_names is not None:
-                self.param_names = param_names
-            else:
-                self._spec_param_names = None
-            
-            self._spec_points = np.array(params_)
-            self._spec_params = params_
-
-        self._quiet = True
-
-        self._npars = self._spec_points.shape[1]
-        self._dims = [i for i in range(self._npars) if len(set(self._spec_points[:, i])) > 1]
-        self._ndims = len(self._dims)
-
-        if self._ndims == 0:
-            raise ValueError("Parameters consistent with a single point.")
-
-        self._interp = self._simple_interp if self._ndims == 1 else self._delaunay_interp
-        self._init_interp()
-
-    
-    def _simple_interp(self, pars):
-        
-        points1d = self._spec_points[:, self._dims[0]]
-        point1d = pars[self._dims[0]]
-
-        if point1d in points1d:
-            return self._spec[points1d == point1d][0]
-
-        idxs = np.arange(len(points1d))
-        mask_lower = (points1d <= point1d)
-        mask_higher = (points1d >= point1d)
-
-        nn_lower = idxs[mask_lower][np.abs(points1d[mask_lower] - point1d).argmin()]
-        nn_higher = idxs[mask_higher][np.abs(points1d[mask_higher] - point1d).argmin()]
-
-        nns = np.array([nn_lower, nn_higher])
-        #nns = np.abs(points1d - point1d).argsort()[:2]
-        nn_points = self._spec_points[nns]
-        nn_points1d = nn_points[:, self._dims[0]]
-
-        frac_dist = (nn_points1d - point1d) / (nn_points1d.max() - nn_points1d.min())
-        
-        if np.any(frac_dist == 0):
-            weights = np.zeros(self._ndims + 1, dtype=float)
-            weights[frac_dist == 0] = 1
-        else:
-            weights = 1 - np.abs(frac_dist)
-        
-        #spec_to_average = np.vstack(self._spec[nns])
-        #out = np.average(spec_to_average, axis=0, weights=weights)
-
-        out = (self._spec[nns] * weights[:, None]).sum(axis=0)
-
-        if not self._quiet:
-            print(f"nearest: {[p[0] for p in nn_points]}")
-            #print(f"fractional distance: {frac_dist}")
-            print(f"weights: {weights}")
-        
-        return out
-        
-
-    def _delaunay_interp(self, pars):
-
-        point = np.array(pars)
-
-        # find nearest neighbours
-        simplex_idx = self._tri.find_simplex(point)
-        simplex = self._tri.simplices[simplex_idx]
-
-        # weights of N + 1 nearest neighbours for N dims
-        weights = np.zeros(self._ndims + 1, dtype=float)
-
-        # barycentric transform
-        transform = self._tri.transform[simplex_idx, :self._ndims]
-        barydist = point - self._tri.transform[simplex_idx, self._ndims]
-
-        # calculate weights for average (normalised)
-        weights[:self._ndims] = transform.dot(barydist)
-        weights[self._ndims] = 1 - weights[:self._ndims].sum()
-
-        out = (self._spec[simplex] * weights[:, None]).sum(axis=0)
-
-        if not self._quiet:
-            nn_points = self._spec_points[simplex]
-            print(f"nearest: {nn_points}")
-            #print(f"fractional distance: {frac_dist}")
-            print(f"weights: {weights}")
-
-        return out
-    
-
-    def _init_interp(self):
-        if self._interp == self._simple_interp:
-            self._bounds = [(self._spec_points.min(), self._spec_points.max())] 
-        elif self._interp == self._delaunay_interp:
-            try:
-                self._tri = spatial.Delaunay(self._spec_points)
-            except spatial.QhullError as qhe:
-                raise ValueError("Parameter space is flat")
-
-            self._bounds = [(min_, max_) for min_, max_ in zip(self._spec_points.min(axis=0), self._spec_points.max(axis=0))]
-        else:
-            raise Exception(f"Could not initialise interpolator: {self._interp}")
-    
-
-    def _arg_extract(self, *args, **kwargs):
-        
-        if self._spec_param_names is None:
-            # no dictionary params (no param names)
-            if len(args) == len(self._spec_params[0]):
-                params = args
-            else:
-                raise ValueError(f"Expected {len(self._spec_params[0])} positional arguments but {len(args)} were given.")
-                
-        else:
-            # dictionary params possible
-            if len(args) == len(self._spec_param_names):
-                # already given in args, use args, check for duplicates
-                dup = [kw for kw in kwargs if kw in self._spec_param_names]
-                if len(dup) > 0:
-                    raise KeyError(f"{dup} given as keyword argument but already specified by positional argument.")
-                else:
-                    params = args
-            elif len(args) == 0:
-                # no args, just check kwargs
-                params = [kwargs.get(p) for p in self._spec_param_names]
-                missing = [p for p in self._spec_param_names if kwargs.get(p) is None]
-                #missing = [p for p in self._spec_param_names if p is None]
-                if len(missing) > 0:
-                    raise KeyError(f"Missing parameters: {missing}")
-            elif len(args) > len(self._spec_param_names):
-                # too many args
-                raise ValueError(f"Expected {len(self._spec_param_names)} positional arguments but {len(args)} were given.")
-            else:
-                # mix of args and kwargs - retrieve args first, check kwargs for rest
-                params = [a for a, p in zip(args, self._spec_param_names)]
-                found = [p for a, p in zip(args, self._spec_param_names)]
-                dup = [kw for kw in kwargs if kw in found]
-                if len(dup) > 0:
-                    raise KeyError(f"{dup} given as keyword argument but already specified by positional argument.")
-
-                params_ = [kwargs.get(p) for p in self._spec_param_names if p not in found]
-                missing = [p for p in params_ if p is None]
-                if len(missing) > 0:
-                    raise KeyError(f"Missing parameters: {missing}")
-                else:
-                    params = params + params_
-
-        return params
-
-    
-    def check_bounds(self, params):
-
-        check = [b[0] <= p <= b[1] for p, b in zip(params, self._bounds)]
-
-        return all(check)
-    
-
-    def __call__(self, *args, **kwargs):
-
-        params = self._arg_extract(*args, **kwargs)
-
-        if not self.check_bounds(params):
-            oob = [(p, b) for p, b in zip(params, self._bounds) if not b[0] <= p <= b[1]]
-            msg = '\n'.join([f"Value: {p}, bounds: {b}" for p, b in oob])
-            raise ValueError(f"Parameters out of bounds: \n{msg}")
-        else:
-            out = self._interp(params)
-            return out
-
-    @property
-    def param_names(self):
-        return self._spec_param_names
-
-    @param_names.setter
-    def param_names(self, param_names):
-        if hasattr(self, '_spec_params') and isinstance(self._spec_params[0], dict):
-            raise ValueError("Cannot set param_names: parameter names already specified by dicts.")
-        
-        if hasattr(self, '_npars') and len(param_names) != self.npars:
-            raise IndexError(f"Length of param_names {len(param_names)} does not match number of parameters {self.npars}.")
-        
-        self._spec_param_names = param_names
-
-    @property
-    def wvs(self):
-        return self._wvs
-
-    @property
-    def bounds(self):
-        return self._bounds
-
-    @property
-    def ndims(self):
-        return self._ndims
-
-    @property
-    def npars(self):
-        return self._npars
+#### MCMC spectrum fitting ####
 
 
-def scaled_spec(pars, radius, distance, interp):
-    #spec = interp(pars)
-    spec = interp(**pars) if isinstance(pars, dict) else interp(pars)
-    spec = (2.254610138e-8 * (radius / distance))**2 * spec
-    return spec
+# _bg_models = {
+#     'flat': bg_flat, 
+#     'bb': bg_blackbody, 
+#     'bbscaled': bg_blackbody_scaled, 
+#     'power': bg_powerlaw,
+#     'powerscaled': bg_powerlaw_scaled,
+#     'one': bg_ones
+# }
 
-def bg_ones(wvs, flux):
-    return np.ones_like(flux)
+_bg_models = {}
 
-def bg_flat(wvs, flux):
-    return np.ones_like(flux) * np.quantile(flux, 0.995)
-
-def bg_blackbody(wvs, flux, teff, radius, distance):
-    wav = wvs * 1e-10
-    bb = (1.1910429723971884e-16 / wav**5) / (np.exp(0.014387768775039337 / (wav * teff)) - 1)
-    bb_spec = ((2.254610138e-8 * (radius / distance))**2 * bb) / 1e7
-    return bb_spec
-
-def bg_blackbody_scaled(wvs, flux, teff):
-    bb = bg_blackbody(wvs, flux, teff, 1, 1)
-    bb = bb * (np.quantile(flux, 0.995) / np.quantile(bb, 0.995))
-    return bb
-
-def bg_powerlaw(wvs, flux, A, expo):
-    freq = 299792458e10 / wvs
-    med_freq = 299792458e10 / np.median(wvs)
-    power = (A / med_freq**(-expo)) * freq ** (-expo)
-    return power
-
-def bg_powerlaw_scaled(wvs, flux, expo):
-    freq = 299792458e10 / wvs
-    power = freq ** (-expo)
-    power = np.quantile(flux, 0.995) / np.quantile(power, 0.995) * power
-    return power
-
-_bg_models = {
-    'flat': bg_flat, 
-    'bb': bg_blackbody, 
-    'bbscaled': bg_blackbody_scaled, 
-    'power': bg_powerlaw,
-    'powerscaled': bg_powerlaw_scaled,
-    'one': bg_ones
-}
-
-def spec_model(
-    pars: dict[str, float], 
+def _spec_model(
+    pars: dict[str, float],
     interpolator: SpectrumInterpolator,
     bg: str | Callable | None = None,
     bg_par_map: dict[str, str] = {},
-    ) -> np.ndarray[float]:
+) -> np.ndarray[float]:
 
     wvs = interpolator._wvs
 
@@ -558,92 +240,23 @@ def spec_model(
     radius, distance = pars['radius'], pars['distance']
     fstar = pars['fstar']
 
-    flux = scaled_spec(interp_pars, radius, distance, interpolator)
+    # flux = scaled_spec(interp_pars, radius, distance, interpolator)
+    flux = specmodels.interpspec_flux_scaled(
+        np.array(),
+        np.array(),
+        interpolator,
+        interp_pars,
+        radius,
+        distance
+    )
 
     bgspec = bg_func(wvs, flux, **bg_pars)
 
     out = fstar * flux + (1 - fstar) * bgspec
 
     return out
-    
 
-class BasePrior:
-    def __init__(self):
-        raise NotImplementedError()
-        
-    def eval(self, p):
-        raise NotImplementedError()
 
-class UniformPrior(BasePrior):
-    """
-    Uniform prior for SpectrumFitter.
-    Requires two parameters: a lower and an upper bound.
-    """
-    def __init__(self, lower, upper):
-        if lower > upper:
-            self._lower = upper
-            self._upper = lower
-        else:
-            self._lower = lower
-            self._upper = upper
-
-    def eval(self, p):
-        if self.lower <= p <= self.upper:
-            return 1.
-        else:
-            return -np.inf
-
-    def __repr__(self):
-        return f"UniformPrior({self.lower}, {self.upper})"
-
-    def __str__(self):
-        return f"UniformPrior(lower={self.lower}, upper={self.upper})"
-
-    @property
-    def lower(self):
-        return self._lower
-
-    @property
-    def upper(self):
-        return self._upper
-
-class GaussianPrior(BasePrior):
-    """
-    Gaussian prior for SpectrumFitter.
-    Requires two parameters: the mean and standard deviation of the Gaussian.
-    """
-    def __init__(self, mean, sigma):
-        if sigma <= 0:
-            raise ValueError("sigma must be positive and non-zero.")
-
-        self._mean = mean
-        self._sigma = sigma
-
-    def eval(self, p):
-
-        prob = np.exp(-(p - self.mean)**2 / (2 * self.sigma**2)) 
-        prob = prob / (2 * np.pi * self.sigma**2)**0.5
-
-        return prob
-
-    def __repr__(self):
-        return f"GaussianPrior({self.mean}, {self.sigma})"
-
-    def __str__(self):
-        return f"GaussianPrior(mean={self.mean}, sigma={self.sigma})"
-
-    @property
-    def mean(self):
-        return self._mean
-
-    @property
-    def sigma(self):
-        return self._sigma
-
-_AnyPrior: TypeAlias = UniformPrior | GaussianPrior
-_PriorOrPriors: TypeAlias = _AnyPrior | list[_AnyPrior]
-
-        
 class SpectrumFitter:
     """
     
@@ -651,7 +264,6 @@ class SpectrumFitter:
 
     _non_interp_keys = {'radius', 'distance', 'fstar'}
     _scatter_methods = {'normal': np.random.normal, 'uniform': np.random.uniform}
-    
 
     def __init__(
         self,
@@ -678,11 +290,11 @@ class SpectrumFitter:
             raise TypeError(f"Invalid type for bg: {type(bg_model)}")
         self._bg_model = bg_func
         self._bg_param_map = bg_param_map
-        
+
         #param_config_interp = {p: v for p, v in param_config.items() if p not in self._non_interp_keys}
         #bg_pars = {bg_par_map[p]: pars[p] for p in bg_par_map}
         #radius, distance = pars['radius'], pars['distance']
-        
+
         if interpolator.param_names is None:
             raise ValueError("interpolator must have param_names specified for use in SpectrumFitter.")
         self._interpolator = interpolator
@@ -696,12 +308,14 @@ class SpectrumFitter:
         self._sort_priors()
 
         self._nwalkers = int(nwalkers)
+
+        if 'pool' in kwargs:
+            raise NotImplementedError("Multiprocessing not currently implemented.")
         self._pool = kwargs.get('pool')
 
         self.wv_tol = kwargs.get('wv_tol', 1e-6)
 
         #self._init_sampler(nwalkers, pool=kwargs.get('pool'))
-    
 
     def _verify_param_config(self, param_config):
         """
@@ -728,7 +342,7 @@ class SpectrumFitter:
         # if self._interpolator.param_names is not None:
         #     if not all(k in self.interpolator.param_names for k in param_config_interp.keys()):
         #         raise KeyError(f"param_config keys ({list(param_config_interp.keys())}) do not match interpolator ({self.interpolator.param_names}).")
-                
+
         param_config_full = {}
         # consolidate priors - any single priors made into list of length one, floats forced, check types
         for par, res in param_config.items():
@@ -756,7 +370,7 @@ class SpectrumFitter:
 
         # total parameters (fixed/unfixed)
         self._npars = len(self.param_config)
-        
+
         # ndims is number of non-fixed parameters take int just in case
         fixed_pars = [p for p, v in self.param_config.items() if isinstance(v, (float, int))]
         fit_pars = [p for p in self.param_config if p not in fixed_pars]
@@ -766,10 +380,9 @@ class SpectrumFitter:
         self._ndims = len(fit_pars)
         self._nsteps = 0
 
-
     def _bound_interpolator(self, param_config):
         """
-        Bounds self.interpolator with uniform priors if it is unbounded by 
+        Bounds self.interpolator with uniform priors if it is unbounded by
         existing priors in param_config
 
         Returns modified param_config and dictionary containing only the new priors.
@@ -787,7 +400,7 @@ class SpectrumFitter:
                     continue
                 else:
                     raise ValueError(f"Fixed value {res} for parameter {par} is out of bounds of interpolator ({bounds})")
-                
+
             # free parameter, bound
             elif res is None:
                 prior = UniformPrior(bounds[0], bounds[1])
@@ -811,11 +424,10 @@ class SpectrumFitter:
             new_priors[par].append(prior)
 
         return param_config, new_priors
-    
 
     def _sort_priors(self):
         """
-        Sorts priors from self.param_config into self._uniform_priors and 
+        Sorts priors from self.param_config into self._uniform_priors and
         self._other_priors, so that uniform priors can be handled first in
         the sampling function
         """
@@ -823,7 +435,7 @@ class SpectrumFitter:
         # consolidate uniform priors so they can be applied first
         uniform_prior_dict = {}
         other_prior_dict = {}
-        
+
         for par, res in self.param_config.items():
 
             if res is None or isinstance(res, float):
@@ -831,7 +443,7 @@ class SpectrumFitter:
 
             uniform_priors = [p for p in res if isinstance(p, UniformPrior)]
             other_priors = [p for p in res if not isinstance(p, UniformPrior)]
-            
+
             if len(uniform_priors) > 0:
                 uniform_prior_dict[par] = uniform_priors
 
@@ -840,7 +452,6 @@ class SpectrumFitter:
 
         self._uniform_priors = uniform_prior_dict
         self._other_priors = other_prior_dict
-    
 
     def _eval_priors(self, param_dict):
         """
@@ -857,7 +468,6 @@ class SpectrumFitter:
         probs = [prior.eval(param_dict[par]) for par, priors in self._other_priors.items() for prior in priors]
 
         return np.prod(probs)
-    
 
     def _get_llh_func(self):
         """
@@ -874,9 +484,9 @@ class SpectrumFitter:
                 return -np.inf
 
             mask = cls.mask
-            interp_pars = {k: param_dict[k] for k in cls.interpolator.param_names}
+            # interp_pars = {k: param_dict[k] for k in cls.interpolator.param_names}
 
-            model = spec_model(
+            model = _spec_model(
                 pars=param_dict,
                 interpolator=cls.interpolator,
                 bg=cls.bg_model,
@@ -892,10 +502,9 @@ class SpectrumFitter:
             llh = -0.5 * chisq + np.log(prior)
 
             return llh
-        
+
         return llh_func
 
-    
     def _init_sampler(self, flux, flux_errors):
         """
         Initialise sampling for a given spectrum
@@ -904,19 +513,18 @@ class SpectrumFitter:
         llh_func = self._get_llh_func()
 
         pars_fixed = [self.param_config[p] for p in self.fixed_pars]
-        
+
         sampler = emcee.EnsembleSampler(
-            self._nwalkers, 
-            self.ndims, 
-            llh_func, 
-            pool=self._pool,
+            self._nwalkers,
+            self.ndims,
+            llh_func,
+            # pool=self._pool,
             args=(pars_fixed, flux, flux_errors, self),
             kwargs=None,
         )
 
         self._sampler = sampler
 
-    
     def _verify_spectrum(self, spectrum):
         """
         Verify shape of spectrum and wavelength scale against interpolator
@@ -932,25 +540,24 @@ class SpectrumFitter:
 
         self._spectrum = spectrum
 
-
     def _verify_mask(self, mask):
         """
         Verify and apply mask against spectrum
         """
 
         wvs = self.interpolator._wvs
-    
+
         if mask is None:
             mask_arr = np.ones(wvs.size, dtype=bool)
         elif isinstance(mask, list) and isinstance(mask[0], (tuple, list)):
             mask_arr = np.ones(wvs.size, dtype=bool)
-        
+
             for lb, ub in mask:
                 if lb > ub:
                     mask_arr = mask_arr & ~((wvs > ub) & (wvs < lb))
                 else:
                     mask_arr = mask_arr & ~((wvs > lb) & (wvs < ub))
-        
+
         elif isinstance(mask, list) and isinstance(mask[0], bool):
             mask_arr = np.array(mask, dtype=bool)
         elif isinstance(mask, np.ndarray) and mask.dtype == bool:
@@ -959,7 +566,6 @@ class SpectrumFitter:
             raise TypeError("Invalid mask format provided.")
 
         self._mask = mask_arr
-
 
     def _verify_init_config(self, init_config):
         """
@@ -976,7 +582,7 @@ class SpectrumFitter:
         # deal with incorrect keys
         missing = [p for p in self.fit_pars if p not in init_config_adj.keys()]
         extra = [p for p in init_config_adj.keys() if p not in self.fit_pars]
-        
+
         if len(missing) > 0:
             raise KeyError(f"Missing keys in init_config: {missing}")
 
@@ -998,7 +604,6 @@ class SpectrumFitter:
 
         self._init_config = init_config_cons
 
-    
     def _create_init_samples(self, init_config, method='normal'):
         """
         Create samples from normal distribution using init_config
@@ -1008,14 +613,13 @@ class SpectrumFitter:
             raise ValueError(f"Invalid choice for method: {method}. Valid options are {list(self._scatter_methods.keys())}.")
 
         scatter_method = self._scatter_methods[method]
-        
+
         init_means = np.array([init_config[p][0] for p in self.fit_pars])
         init_sigmas = np.array([init_config[p][1] for p in self.fit_pars])
 
         init_samples = init_means + init_sigmas * scatter_method(size=(self.nwalkers, self.ndims))
-        
+
         return init_samples
-        
 
     def initialise(self, spectrum, init_config, mask=None):
         """
@@ -1030,7 +634,7 @@ class SpectrumFitter:
         self._verify_mask(mask)
 
         self._init_sampler(spectrum[:, 1], spectrum[:, 2])
-        
+
         # verify init_config, sets self.init_config
         self._verify_init_config(init_config)
 
@@ -1041,21 +645,19 @@ class SpectrumFitter:
         self._initialised = True
         self._nsteps = 0
 
-
     def _run_sampler(self, nsteps, continue_=True, progress=True):
         """
         Internal sampling method
         """
-        
+
         # run from init_samples if no runs done so far or continue is False
-        if self.nsteps == 0 or continue_ == False:
+        if self.nsteps == 0 or continue_ is False:
             self.sampler.run_mcmc(self.init_samples, nsteps, progress=progress)
         else:
             self.sampler.run_mcmc(None, nsteps, progress=progress)
 
         self._nsteps = self._nsteps + int(nsteps)
 
-    
     def run(self, nsteps, continue_=True, progress=True, spectrum=None, mask=None, init_config=None):
         """
         Run MCMC sampling
@@ -1083,7 +685,7 @@ class SpectrumFitter:
                 raise Exception("Unexpected exception: initialised but existing init_config is None.")
 
             self.initialise(spectrum, init_config, mask)
-        
+
         elif init_config is not None:
             # initialise from config, grab spectrum from self
             spectrum = self.spectrum
@@ -1111,10 +713,8 @@ class SpectrumFitter:
 
         self._run_sampler(nsteps, continue_=continue_, progress=progress)
 
-
     def get_chain(self, *args, **kwargs):
         return self.sampler.get_chain(*args, **kwargs)
-    
 
     @property
     def param_config(self):
@@ -1123,7 +723,7 @@ class SpectrumFitter:
     @property
     def interpolator(self):
         return self._interpolator
-    
+
     @property
     def fit_pars(self):
         return self._fit_pars
@@ -1131,7 +731,7 @@ class SpectrumFitter:
     @property
     def fixed_pars(self):
         return self._fixed_pars
-    
+
     @property
     def ndims(self):
         return self._ndims
@@ -1175,7 +775,7 @@ class SpectrumFitter:
     @property
     def nsteps(self):
         return self._nsteps
-    
+
 
 #### legacy ####
 
