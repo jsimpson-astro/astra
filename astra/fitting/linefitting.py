@@ -1,12 +1,11 @@
 from astra.utils._helpers import dummy_pbar, check_spectra, check_vbinned
+from astra.utils.constants import c_kms as c
 
 import numpy as np
 from numba import njit
 from tqdm.auto import tqdm
 import matplotlib.pyplot as plt
 import emcee
-
-c_ = 299792.458
 
 
 @njit
@@ -52,8 +51,8 @@ def generate_multilines(
 
     for line_wv, line_height in zip(line_wvs, line_heights):
         line_array += scaled_gauss(wvs,
-                                   line_wv * (1 + (rv / c_)),
-                                   line_wv * (fwhm / c_) / 2.354820045,
+                                   line_wv * (1 + (rv / c)),
+                                   line_wv * (fwhm / c) / 2.354820045,
                                    line_height
                                    )
 
@@ -194,7 +193,6 @@ def linefitmc(
         Additional columns depend on values on `return_fwhm` and `return_all`.
 
     """
-    c_ = 299792.458
 
     spec_w_errors = check_spectra(spec)
 
@@ -243,7 +241,7 @@ def linefitmc(
 
     # construct mask around lines
     for line_wv in line_wvs:
-        wv_width = line_wv * (mask_width / c_)
+        wv_width = line_wv * (mask_width / c)
         lb, ub = line_wv - wv_width / 2, line_wv + wv_width / 2
         mask = mask & ~((wvs > lb) & (wvs < ub))
     mask = ~mask
@@ -360,8 +358,8 @@ def linefitmc(
             # construct mask around lines
             for line_wv in line_wvs:
                 # shifted wv
-                wv_width = line_wv * (mask_width / c_)
-                line_wv_shifted = line_wv * (1 + (rv0 / c_))
+                wv_width = line_wv * (mask_width / c)
+                line_wv_shifted = line_wv * (1 + (rv0 / c))
                 lb, ub = line_wv_shifted - wv_width / 2, line_wv_shifted + wv_width / 2
                 mask = mask & ~((wvs > lb) & (wvs < ub))
             mask = ~mask
@@ -369,7 +367,7 @@ def linefitmc(
             wvs_masked, flux_masked, flux_errs_masked = wvs[mask], flux[mask], flux_errs[mask]
 
             # find edges of mask
-            starts, ends = starts0 * (1 + rv0 / c_), ends0 * (1 + rv0 / c_)
+            starts, ends = starts0 * (1 + rv0 / c), ends0 * (1 + rv0 / c)
 
             #####################
 
@@ -434,10 +432,10 @@ def linefitmc(
                             block_mask = (wvs_masked > start) & (wvs_masked < end)
                             ax.plot(wvs_masked[block_mask], total_flux[block_mask] - i_spec, color='r', lw=1)
 
-                        ax.vlines([line_wv * (1 + (rv_out / c_)) for line_wv in line_wvs], -i_spec - 0.2, -i_spec, color='r', lw=1)
+                        ax.vlines([line_wv * (1 + (rv_out / c)) for line_wv in line_wvs], -i_spec - 0.2, -i_spec, color='r', lw=1)
 
                         ax.vlines(line_wvs, -i_spec - 0.4, -i_spec - 0.2, color='b', lw=1)
-                        ax.vlines([line_wv * (1 + (rv0 / c_)) for line_wv in line_wvs], -i_spec - 0.4, -i_spec - 0.2, color='g', lw=1)
+                        ax.vlines([line_wv * (1 + (rv0 / c)) for line_wv in line_wvs], -i_spec - 0.4, -i_spec - 0.2, color='g', lw=1)
 
                 if print_info:
                     info = f"init rv: {rv0:.0f} km/s  "
