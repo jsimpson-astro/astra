@@ -10,6 +10,7 @@ __all__ = [
 
 from typing_extensions import deprecated
 from inspect import signature
+import functools
 import numpy as np
 
 def deprecated_import(msg):
@@ -23,6 +24,7 @@ def deprecated_(*dep_args, **dep_kwargs):
         stacklevel = dep_kwargs.get('stacklevel', 1)
         func = deprecated(*dep_args, **dep_kwargs | dict(stacklevel=stacklevel + 1))(func)
 
+        @functools.wraps(func)
         def wrapper(*args, **kwargs):
             return func(*args, **kwargs)
 
@@ -31,8 +33,8 @@ def deprecated_(*dep_args, **dep_kwargs):
         newdoc = f"- {msg}" + '\n' + func.__doc__
         wrapper.__doc__ = newdoc
 
-        # set signature to match
-        wrapper.__signature__ = signature(func)
+        # # set signature to match
+        # wrapper.__signature__ = signature(func)
 
         return wrapper
 
