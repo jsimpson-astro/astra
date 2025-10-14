@@ -1,10 +1,10 @@
-from typing import Callable, TypeAlias
+from typing import TypeAlias
 import numpy as np
 
 class BasePrior:
     def __init__(self):
         raise NotImplementedError()
-        
+
     def eval(self, p):
         raise NotImplementedError()
 
@@ -13,6 +13,7 @@ class UniformPrior(BasePrior):
     Uniform prior for SpectrumFitter.
     Requires two parameters: a lower and an upper bound.
     """
+
     def __init__(self, lower, upper):
         if lower > upper:
             self._lower = upper
@@ -49,6 +50,7 @@ class GaussianPrior(BasePrior):
     Gaussian prior for SpectrumFitter.
     Requires two parameters: the mean and standard deviation of the Gaussian.
     """
+
     def __init__(self, mean, sigma):
         if sigma <= 0:
             raise ValueError("sigma must be positive and non-zero.")
@@ -60,7 +62,7 @@ class GaussianPrior(BasePrior):
         """
         Evaluate prior probability
         """
-        prob = np.exp(-(p - self.mean)**2 / (2 * self.sigma**2)) 
+        prob = np.exp(-(p - self.mean)**2 / (2 * self.sigma**2))
         prob = prob / (2 * np.pi * self.sigma**2)**0.5
 
         return prob
@@ -82,4 +84,3 @@ class GaussianPrior(BasePrior):
 # typing for prior classes
 _AnyPrior: TypeAlias = UniformPrior | GaussianPrior
 _PriorOrPriors: TypeAlias = _AnyPrior | list[_AnyPrior]
-
