@@ -9,7 +9,7 @@ __all__ = [
 ]
 
 from typing_extensions import deprecated
-from inspect import signature
+# from inspect import signature
 import functools
 import numpy as np
 
@@ -30,7 +30,7 @@ def deprecated_(*dep_args, **dep_kwargs):
 
         # get deprecation message, add to docs
         msg = dep_args[0] if dep_args else dep_kwargs['msg']
-        newdoc = f"- {msg}" + '\n' + func.__doc__
+        newdoc = f"- {msg}" + '\n' + ("" if func.__doc__ is None else func.__doc__)
         wrapper.__doc__ = newdoc
 
         # # set signature to match
