@@ -1,6 +1,6 @@
 # constants
 c = 299792458
-c_kms = _c / 1000
+c_kms = c / 1000
 
 # rsun / pc
 # for surface flux to incident flux, with radius and distance in rsun and pc
