@@ -15,7 +15,7 @@ class SpectrumInterpolator:
     wvs: np.ndarray
         Wavelengths to be used for interpolation
     spec: list of np.ndarray
-        List of 1D flux arrays of model spectra. 
+        List of 1D flux arrays of model spectra.
         Must match length of wvs
     params: list of tuples of dicts, or numpy.ndarray
         List of parameters associated to each spectrum.
@@ -28,7 +28,7 @@ class SpectrumInterpolator:
         List of parameter names, must match number of paramters in `params`.
         If `params` is a list of dict, `param_names` is not needed and will be assembled
         from dict keys in `params`.
-        Must be set if interpolator is to be provided to SpectrumFitter and `params` is 
+        Must be set if interpolator is to be provided to SpectrumFitter and `params` is
         not a list of dict.
 
     Methods:
@@ -42,21 +42,21 @@ class SpectrumInterpolator:
     """
 
     def __init__(
-        self, 
+        self,
         wvs: np.ndarray,
-        spec: list[np.ndarray], 
-        params: list[float|list|tuple|dict] | np.ndarray,
+        spec: list[np.ndarray],
+        params: list[float | list | tuple | dict] | np.ndarray,
         param_names: list[str] | None = None
     ):
 
         # check number of spectra = number of parameters
         if len(spec) != len(params):
             raise IndexError(f"Length of spectra list ({len(spec)}) does not match length of parameter list ({len(params)}).")
-        
+
         # # check wavelengths all match
         # if not all(np.all(spec[0][:, 0] == s[:, 0]) for s in spec[1:]):
         #     raise ValueError("Wavelength scales must be identical for all spectra.")
-        # check all sizes match 
+        # check all sizes match
         if not all(spec[0].shape == s.shape for s in spec[1:]):
             raise ValueError("All spectra must have identical shapes.")
         if not all(s.shape == wvs.shape for s in spec):
@@ -77,7 +77,7 @@ class SpectrumInterpolator:
             self._spec_param_names = tuple(params[0].keys())
             self._spec_points = np.array([list(pars.values()) for pars in params])
             self._spec_params = params
-            
+
         else:
             if isinstance(params, np.ndarray) and len(params.shape) == 1:
                 params_ = params[:, None]
@@ -85,7 +85,7 @@ class SpectrumInterpolator:
                 params_ = np.array(params)[:, None]
             else:
                 params_ = params
-                
+
             for pars in params_:
                 first_dims = len(params_[0])
                 assert isinstance(pars, (list, tuple, np.ndarray))
@@ -95,7 +95,7 @@ class SpectrumInterpolator:
                 self.param_names = param_names
             else:
                 self._spec_param_names = None
-            
+
             self._spec_points = np.array(params_)
             self._spec_params = params_
 
@@ -111,10 +111,9 @@ class SpectrumInterpolator:
         self._interp = self._simple_interp if self._ndims == 1 else self._delaunay_interp
         self._init_interp()
 
-    
     def _simple_interp(self, pars):
-    	# interpolator for a single parameter dimension
-        
+        # interpolator for a single parameter dimension
+
         points1d = self._spec_points[:, self._dims[0]]
         point1d = pars[self._dims[0]]
 
@@ -134,13 +133,13 @@ class SpectrumInterpolator:
         nn_points1d = nn_points[:, self._dims[0]]
 
         frac_dist = (nn_points1d - point1d) / (nn_points1d.max() - nn_points1d.min())
-        
+
         if np.any(frac_dist == 0):
             weights = np.zeros(self._ndims + 1, dtype=float)
             weights[frac_dist == 0] = 1
         else:
             weights = 1 - np.abs(frac_dist)
-        
+
         #spec_to_average = np.vstack(self._spec[nns])
         #out = np.average(spec_to_average, axis=0, weights=weights)
 
@@ -150,12 +149,11 @@ class SpectrumInterpolator:
             print(f"nearest: {[p[0] for p in nn_points]}")
             #print(f"fractional distance: {frac_dist}")
             print(f"weights: {weights}")
-        
+
         return out
-        
 
     def _delaunay_interp(self, pars):
-    	# delaunay interpolation for 2D+ interpolation
+        # delaunay interpolation for 2D+ interpolation
 
         point = np.array(pars)
 
@@ -183,32 +181,30 @@ class SpectrumInterpolator:
             print(f"weights: {weights}")
 
         return out
-    
 
     def _init_interp(self):
         if self._interp == self._simple_interp:
-            self._bounds = [(self._spec_points.min(), self._spec_points.max())] 
+            self._bounds = [(self._spec_points.min(), self._spec_points.max())]
         elif self._interp == self._delaunay_interp:
             try:
                 self._tri = spatial.Delaunay(self._spec_points)
             except spatial.QhullError as qhe:
-                raise ValueError("Parameter space is flat")
+                raise ValueError("Parameter space is flat:", qhe)
 
             self._bounds = [(min_, max_) for min_, max_ in zip(self._spec_points.min(axis=0), self._spec_points.max(axis=0))]
         else:
             raise Exception(f"Could not initialise interpolator: {self._interp}")
-    
 
     def _arg_extract(self, *args, **kwargs):
-    	# allows calling interpolator with positional and kwargs simultaneously
-        
+        # allows calling interpolator with positional and kwargs simultaneously
+
         if self._spec_param_names is None:
             # no dictionary params (no param names)
             if len(args) == len(self._spec_params[0]):
                 params = args
             else:
                 raise ValueError(f"Expected {len(self._spec_params[0])} positional arguments but {len(args)} were given.")
-                
+
         else:
             # dictionary params possible
             if len(args) == len(self._spec_param_names):
@@ -245,17 +241,15 @@ class SpectrumInterpolator:
 
         return params
 
-    
     def check_bounds(self, params):
-    	# check interpolator bounds satisfied for a call
+        # check interpolator bounds satisfied for a call
 
         check = [b[0] <= p <= b[1] for p, b in zip(params, self._bounds)]
 
         return all(check)
-    
 
     def __call__(self, *args, **kwargs):
-    	# evaluate interpolator
+        # evaluate interpolator
 
         params = self._arg_extract(*args, **kwargs)
 
@@ -275,10 +269,10 @@ class SpectrumInterpolator:
     def param_names(self, param_names):
         if hasattr(self, '_spec_params') and isinstance(self._spec_params[0], dict):
             raise ValueError("Cannot set param_names: parameter names already specified by dicts.")
-        
+
         if hasattr(self, '_npars') and len(param_names) != self.npars:
             raise IndexError(f"Length of param_names {len(param_names)} does not match number of parameters {self.npars}.")
-        
+
         self._spec_param_names = param_names
 
     @property
@@ -303,13 +297,21 @@ class SpectrumInterpolator:
 # base models
 # all functions start with wavelengths, fluxes as first two args
 
-def flat(wvs, flux):
+def flat(
+    wvs: np.ndarray[float],
+    flux: np.ndarray[float],
+) -> np.ndarray[float]:
     """
     Flat spectrum like `wvs`, with all fluxes = 1
     """
     return np.ones_like(wvs)
 
-def powerlaw(wvs, flux, expo):
+
+def powerlaw(
+    wvs: np.ndarray[float],
+    flux: np.ndarray[float],
+    expo: float
+) -> np.ndarray[float]:
     """
     Simple power law, frequency^(-expo)
     """
@@ -317,7 +319,12 @@ def powerlaw(wvs, flux, expo):
     power = freq ** (-expo)
     return power
 
-def blackbody(wvs, flux, teff):
+
+def blackbody(
+    wvs: np.ndarray[float],
+    flux: np.ndarray[float],
+    teff: float
+) -> np.ndarray[float]:
     """
     Blackbody radiation from Planck's law, in erg/s/cm^2/AA
     """
@@ -329,41 +336,47 @@ def blackbody(wvs, flux, teff):
     model = model / 1e7
     return model
 
+
 def interpspec(
-    wvs: np.ndarray[float], 
-    flux: np.ndarray[float], 
+    wvs: np.ndarray[float],
+    flux: np.ndarray[float],
     interp: SpectrumInterpolator,
     pars: dict[str, float]
-    ):
+) -> np.ndarray[float]:
     """
     Wrapper for an instance of SpectrumInterpolator, to provide a similar interface
     to the other spectral models here.
     """
     model = interp(**pars)
-    #model = interp(**pars) if isinstance(pars, dict) else interp(pars)
+    # model = interp(**pars) if isinstance(pars, dict) else interp(pars)
     return model
+
 
 # scalings
 
 def _arb_scale(model_flux, scale):
     return scale * model_flux
 
+
 def _quantile_scale(model_flux, flux, quantile):
     return model_flux * (np.quantile(flux, quantile) / np.quantile(model_flux, quantile))
 
+
 def _cen_scale(model_flux, wvs, flux, quantile, window):
-    cen_wv = (wvs[0] + wvs[-1]) / 2 
+    cen_wv = (wvs[0] + wvs[-1]) / 2
     cen_wv_idx = np.abs(wvs - cen_wv).argmin()
 
-    if averaging_width is None:
+    if window is None:
         averaging_mask = np.ones_like(flux, dtype=bool)
     else:
         averaging_mask = (wvs > cen_wv - window / 2) & (wvs < cen_wv + window / 2)
-    
+
     return model_flux * (np.quantile(flux[averaging_mask], quantile) / model_flux[cen_wv_idx])
+
 
 def _flux_scale(model_flux, radius, distance):
     return (rsun_pc_scale * (radius / distance))**2 * model_flux
+
 
 ####
 
@@ -379,38 +392,42 @@ _scaling_options = {
 # for the user to follow (function signatures, docs, etc.)
 # could move to model class in the future
 
+# flat
+
 def flat_arb_scaled(
-    wvs: np.ndarray[float], 
-    flux: np.ndarray[float], 
+    wvs: np.ndarray[float],
+    flux: np.ndarray[float],
     scale: float
-    ):
-	"""
-	Flat spectrum like `wvs`, 
+) -> np.ndarray[float]:
+    """
+    Flat spectrum like `wvs`,
     with flux set to `scale`.
-	"""
+    """
     model = flat(wvs, flux)
     model = _arb_scale(model, scale)
     return model
 
+
 def flat_quantile_scaled(
-    wvs: np.ndarray[float], 
-    flux: np.ndarray[float], 
+    wvs: np.ndarray[float],
+    flux: np.ndarray[float],
     quantile: float = 0.995
-    ):
+) -> np.ndarray[float]:
     """
-    Flat spectrum like `wvs`, 
+    Flat spectrum like `wvs`,
     scaled to the `quantile` quantile of `flux`.
     """
     model = flat(wvs, flux)
     model = _quantile_scale(model, flux, quantile)
     return model
 
+
 def flat_cen_scaled(
-    wvs: np.ndarray[float], 
-    flux: np.ndarray[float], 
+    wvs: np.ndarray[float],
+    flux: np.ndarray[float],
     quantile: float = 0.995,
     window: float | None = None
-    ):
+) -> np.ndarray[float]:
     """
     Flat spectrum like `wvs`,
     scaled to the `quantile` quantile of `flux` in a central window of width `window` (in AA).
@@ -419,26 +436,29 @@ def flat_cen_scaled(
     model = _cen_scale(model, wvs, flux, quantile, window)
     return model
 
+# powerlaw
+
 def powerlaw_arb_scaled(
-    wvs: np.ndarray[float], 
-    flux: np.ndarray[float], 
-    expo: float, 
+    wvs: np.ndarray[float],
+    flux: np.ndarray[float],
+    expo: float,
     scale: float
-    ):
+) -> np.ndarray[float]:
     """
     Simple power law, frequency^(-expo),
     multiplied by arbitrary scaling `scale`.
     """
     model = powerlaw(wvs, flux, expo)
     model = _arb_scale(model, scale)
-    return power
+    return model
+
 
 def powerlaw_quantile_scaled(
-    wvs: np.ndarray[float], 
-    flux: np.ndarray[float], 
+    wvs: np.ndarray[float],
+    flux: np.ndarray[float],
     expo: float,
     quantile: float = 0.995
-    ):
+) -> np.ndarray[float]:
     """
     Simple power law, frequency^(-expo),
     scaled to the `quantile` quantile of `flux`.
@@ -447,13 +467,14 @@ def powerlaw_quantile_scaled(
     model = _quantile_scale(model, flux, quantile)
     return model
 
+
 def powerlaw_cen_scaled(
-    wvs: np.ndarray[float], 
-    flux: np.ndarray[float], 
+    wvs: np.ndarray[float],
+    flux: np.ndarray[float],
     expo: float,
     quantile: float = 0.995,
     window: float | None = None
-    ):
+) -> np.ndarray[float]:
     """
     Simple power law, frequency^(-expo),
     scaled to the `quantile` quantile of `flux` in a central window of width `window` (in AA).
@@ -462,26 +483,29 @@ def powerlaw_cen_scaled(
     model = _cen_scale(model, wvs, flux, quantile, window)
     return model
 
+# blackbody
+
 def blackbody_arb_scaled(
-    wvs: np.ndarray[float], 
-    flux: np.ndarray[float], 
-    teff: float, 
+    wvs: np.ndarray[float],
+    flux: np.ndarray[float],
+    teff: float,
     scale: float
-    ):
+) -> np.ndarray[float]:
     """
     Blackbody radiation from Planck's law, in erg/s/cm^2/AA,
     multiplied by arbitrary scaling `scale`.
     """
-	model = blackbody(wvs, flux, teff)
+    model = blackbody(wvs, flux, teff)
     model = _arb_scale(model, scale)
-	return model
+    return model
+
 
 def blackbody_quantile_scaled(
-    wvs: np.ndarray[float], 
-    flux: np.ndarray[float], 
+    wvs: np.ndarray[float],
+    flux: np.ndarray[float],
     teff: float,
     quantile: float = 0.995
-    ):
+) -> np.ndarray[float]:
     """
     Blackbody radiation from Planck's law, in erg/s/cm^2/AA,
     scaled to the `quantile` quantile of `flux`.
@@ -490,13 +514,14 @@ def blackbody_quantile_scaled(
     model = _quantile_scale(model, flux, quantile)
     return model
 
+
 def blackbody_cen_scaled(
-    wvs: np.ndarray[float], 
-    flux: np.ndarray[float], 
+    wvs: np.ndarray[float],
+    flux: np.ndarray[float],
     teff: float,
     quantile: float = 0.995,
     window: float | None = None
-    ):
+) -> np.ndarray[float]:
     """
     Blackbody radiation from Planck's law, in erg/s/cm^2/AA,
     scaled to the `quantile` quantile of `flux` in a central window of width `window` (in AA).
@@ -505,83 +530,89 @@ def blackbody_cen_scaled(
     model = _cen_scale(model, wvs, flux, quantile, window)
     return model
 
+
 def blackbody_flux_scaled(
-    wvs: np.ndarray[float], 
-    flux: np.ndarray[float], 
-    teff: float, 
-    radius: float, 
+    wvs: np.ndarray[float],
+    flux: np.ndarray[float],
+    teff: float,
+    radius: float,
     distance: float
-    ):
+) -> np.ndarray[float]:
     """
     Blackbody radiation from Planck's law, in erg/s/cm^2/AA,
     scaled to a star with radius `radius` (in Rsun) and distance `distance` (in pc).
     """
     model = blackbody(wvs, flux, teff)
     model = _flux_scale(model, radius, distance)
-    return bb
+    return model
 
+# interpolator-based
 
 def interpspec_arb_scaled(
-    wvs: np.ndarray[float], 
-    flux: np.ndarray[float], 
+    wvs: np.ndarray[float],
+    flux: np.ndarray[float],
     interp: SpectrumInterpolator,
     pars: dict[str, float],
     scale: float
-    ):
+) -> np.ndarray[float]:
     """
-    Wrapper for an instance of SpectrumInterpolator, 
+    Wrapper for an instance of SpectrumInterpolator,
     multiplied by arbitrary scaling `scale`.
     """
     model = interpspec(wvs, flux, interp, pars)
     model = _arb_scale(model, scale)
     return model
 
+
 def interpspec_quantile_scaled(
-    wvs: np.ndarray[float], 
-    flux: np.ndarray[float], 
+    wvs: np.ndarray[float],
+    flux: np.ndarray[float],
     interp: SpectrumInterpolator,
     pars: dict[str, float],
     quantile: float = 0.995
-    ):
+) -> np.ndarray[float]:
     """
-    Wrapper for an instance of SpectrumInterpolator, 
+    Wrapper for an instance of SpectrumInterpolator,
     scaled to the `quantile` quantile of `flux`.
     """
     model = interpspec(wvs, flux, interp, pars)
     model = _quantile_scale(model, flux, quantile)
     return model
 
+
 def interpspec_cen_scaled(
-    wvs: np.ndarray[float], 
-    flux: np.ndarray[float], 
+    wvs: np.ndarray[float],
+    flux: np.ndarray[float],
     interp: SpectrumInterpolator,
     pars: dict[str, float],
     quantile: float = 0.995,
     window: float | None = None
-    ):
+) -> np.ndarray[float]:
     """
-    Wrapper for an instance of SpectrumInterpolator, 
+    Wrapper for an instance of SpectrumInterpolator,
     scaled to the `quantile` quantile of `flux` in a central window of width `window` (in AA).
     """
     model = interpspec(wvs, flux, interp, pars)
     model = _cen_scale(model, wvs, flux, quantile, window)
     return model
 
+
 def interpspec_flux_scaled(
-    wvs: np.ndarray[float], 
-    flux: np.ndarray[float], 
+    wvs: np.ndarray[float],
+    flux: np.ndarray[float],
     interp: SpectrumInterpolator,
     pars: dict[str, float],
     radius: float,
     distance: float
-    ):
+) -> np.ndarray[float]:
     """
-    Wrapper for an instance of SpectrumInterpolator, 
+    Wrapper for an instance of SpectrumInterpolator,
     scaled to a star with radius `radius` (in Rsun) and distance `distance` (in pc).
     """
     model = interpspec(wvs, flux, interp, pars)
     model = _cen_scale(model, radius, distance)
     return model
+
 
 @deprecated_("scaled_spec is deprecated, use interpspec (or interpspec_flux_scaled) instead.")
 def scaled_spec(pars, radius, distance, interp):
