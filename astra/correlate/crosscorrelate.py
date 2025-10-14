@@ -7,10 +7,7 @@ from tqdm.auto import tqdm
 from numba import njit
 from numba.types import bool_
 
-
-c_ = 299792.458
 # wv_tol = 1e-6
-
 
 #### backend functions ####
 
