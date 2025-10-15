@@ -1,3 +1,25 @@
+__all__ = [
+    'SpectrumInterpolator',
+    'blackbody',
+    'blackbody_arb_scaled',
+    'blackbody_cen_scaled',
+    'blackbody_flux_scaled',
+    'blackbody_quantile_scaled',
+    'flat',
+    'flat_arb_scaled',
+    'flat_cen_scaled',
+    'flat_quantile_scaled',
+    'interpspec',
+    'interpspec_arb_scaled',
+    'interpspec_cen_scaled',
+    'interpspec_flux_scaled',
+    'interpspec_quantile_scaled',
+    'powerlaw',
+    'powerlaw_arb_scaled',
+    'powerlaw_cen_scaled',
+    'powerlaw_quantile_scaled'
+]
+
 from astra.utils.constants import c, rsun_pc_scale, bb_prefac, bb_expfac
 from astra.utils._helpers import deprecated_
 
@@ -352,6 +374,8 @@ def interpspec(
     return model
 
 
+_model_funcs = [flat, powerlaw, blackbody, interpspec]
+
 # scalings
 
 def _arb_scale(model_flux, scale):
@@ -377,6 +401,8 @@ def _cen_scale(model_flux, wvs, flux, quantile, window):
 def _flux_scale(model_flux, radius, distance):
     return (rsun_pc_scale * (radius / distance))**2 * model_flux
 
+
+_scale_funcs = [_arb_scale, _quantile_scale, _cen_scale, _flux_scale]
 
 ####
 
@@ -614,9 +640,31 @@ def interpspec_flux_scaled(
     return model
 
 
+# dict of each model and their scaled versions
+_models_and_scales = {
+    model_func.__name__: [
+        model_func.__name__ + scale_func.__name__ + 'd' for scale_func in scale_funcs
+    ]
+    for model_func, scale_funcs in _scaling_options.items()
+}
+
+# exposed lists for reference
+BASE_MODELS = [func.__name__ for func in _model_funcs]
+SCALED_MODELS = [model for models in _models_and_scales.values() for model in models]
+ALL_MODELS = sorted(BASE_MODELS + SCALED_MODELS)
+
 @deprecated_("scaled_spec is deprecated, use interpspec (or interpspec_flux_scaled) instead.")
 def scaled_spec(pars, radius, distance, interp):
     #spec = interp(pars)
     spec = interp(**pars) if isinstance(pars, dict) else interp(pars)
     spec = (2.254610138e-8 * (radius / distance))**2 * spec
     return spec
+
+
+if __name__ == '__main__':
+    generated_all = (
+        "__all__ = [\n    "
+        + ',\n    '.join(['\'SpectrumInterpolator\''] + [f"\'{m}\'" for m in ALL_MODELS])
+        + "\n]"
+    )
+    print(generated_all)
