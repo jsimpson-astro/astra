@@ -25,7 +25,8 @@ astra is organised into three main sub-modules and two auxiliary sub-modules:
   - `linefitmc`: a complex function for multiple-line fitting using `emcee`.
   - `rvmc`: a function for fitting radial velocities using `emcee`.
   - `SpectrumInterpolator`: a class for interpolating between model spectra of known parameters, and
-  - `SpectrumFitter`: a class for fitting spectra to models using `SpectrumInterpolator`.
+  - `SpectrumFitter`: a class for fitting spectra to models using emcee and an instance of`SpectrumInterpolator`. Priors may be applied to fitting -- currently uniform and Gaussian priors are provided (by `UniformPrior` and `GaussianPrior`, respectively).
+  The fitting submodule also provides many simple spectral models, such as blackbody models and power laws, under the `specmodels` sub-module.
 
 * **integrate** - various methods for integrating spectra. Currently provides one operation, with more on the way:
   - `ew`: computes the equivalent width of one or multiple spectra. Masking is supported.
