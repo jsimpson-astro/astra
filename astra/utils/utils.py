@@ -1,13 +1,14 @@
 __all__ = [
     'taper_spec',
     'calculate_vpx',
+    'line_mask',
     'mask_interp',
     'average_spec',
     'phase_average',
     'sincshift'
 ]
 
-from astra.utils._helpers import check_spectra, check_vbinned
+from astra.utils._helpers import check_spectra, check_vbinned, apply_mask
 from astra.utils.constants import C_KMS
 
 import numpy as np
@@ -71,6 +72,26 @@ def calculate_vpx(wvs: np.ndarray) -> float:
 
     """
     return C_KMS * (np.exp(np.log(wvs.max() / wvs.min()) / (wvs.size - 1)) - 1)
+
+
+def line_mask(line_wvs: list[float], width: float) -> list[tuple[float, float]]:
+    """
+    Create a mask around a given set of line wavelengths with width `width`.
+    Automatically merges overlapping mask edges.
+    """
+
+    line_wvs = sorted(line_wvs)
+
+    n_lines = len(line_wvs)
+
+    mask = [(0., line_wvs[0] - width / 2)]
+    mask += [(line_wvs[i] + width / 2, line_wvs[i + 1] - width / 2) for i in range(n_lines - 1)]
+    mask += [(line_wvs[-1] + width / 2, np.inf)]
+
+    # remove invalid entries
+    mask = [i for i in mask if i[0] < i[1]]
+
+    return mask
 
 
 def _mask_interp(
