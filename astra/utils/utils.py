@@ -8,7 +8,7 @@ __all__ = [
 ]
 
 from astra.utils._helpers import check_spectra, check_vbinned
-from astra.utils.constants import c_kms as c
+from astra.utils.constants import C_KMS
 
 import numpy as np
 import warnings
@@ -70,7 +70,7 @@ def calculate_vpx(wvs: np.ndarray) -> float:
     Calculate the average velocity per pixel from an array of wavelengths.
 
     """
-    return c * (np.exp(np.log(wvs.max() / wvs.min()) / (wvs.size - 1)) - 1)
+    return C_KMS * (np.exp(np.log(wvs.max() / wvs.min()) / (wvs.size - 1)) - 1)
 
 
 def _mask_interp(
@@ -340,10 +340,10 @@ def sincshift(
         warnings.warn("Spectra not uniform in velocity space.", RuntimeWarning)
 
     maxsinc = 15
-    v_avg = c * (np.exp(np.log(wvs.max() / wvs.min()) / (wvs.size - 1)) - 1)
+    v_avg = C_KMS * (np.exp(np.log(wvs.max() / wvs.min()) / (wvs.size - 1)) - 1)
 
     # compute pixel shift, separate into integer (rounded) and decimal parts
-    pxshift = -np.log(1 + vshift / c) / np.log(1 + v_avg / c)  # px shift
+    pxshift = -np.log(1 + vshift / C_KMS) / np.log(1 + v_avg / C_KMS)  # px shift
     nshift, subpxshift = int(pxshift), pxshift - int(pxshift)
 
     # compute sinc function, shifted by the decimal part of the shift (xshift)~

@@ -20,7 +20,7 @@ __all__ = [
     'powerlaw_quantile_scaled'
 ]
 
-from astra.utils.constants import c, rsun_pc_scale, bb_prefac, bb_expfac
+from astra.utils.constants import C_KMS, RSUN_PC_SCALE, BB_PREFAC, BB_EXPFAC
 from astra.utils._helpers import deprecated_
 
 import numpy as np
@@ -337,7 +337,7 @@ def powerlaw(
     """
     Simple power law, frequency^(-expo)
     """
-    freq = (c * 1e10) / wvs
+    freq = (C_KMS * 1e10) / wvs
     power = freq ** (-expo)
     return power
 
@@ -353,7 +353,7 @@ def blackbody(
     # wavelengths to m
     wav = wvs * 1e-10
     # plancks law
-    model = (bb_prefac / wav**5) / (np.exp(bb_expfac / (wav * teff)) - 1)
+    model = (BB_PREFAC / wav**5) / (np.exp(BB_EXPFAC / (wav * teff)) - 1)
     # rescale to erg/s/cm^2/AA
     model = model / 1e7
     return model
@@ -399,7 +399,7 @@ def _cen_scale(model_flux, wvs, flux, quantile, window):
 
 
 def _flux_scale(model_flux, radius, distance):
-    return (rsun_pc_scale * (radius / distance))**2 * model_flux
+    return (RSUN_PC_SCALE * (radius / distance))**2 * model_flux
 
 
 _scale_funcs = [_arb_scale, _quantile_scale, _cen_scale, _flux_scale]
