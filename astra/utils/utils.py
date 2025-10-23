@@ -252,7 +252,7 @@ def phase_average(
         Number of phase bins.
         Ignored if `phase_bins` set explicitly, required if `phase_bins` is not set.
     width: float, optional
-        Width of phase bins, such that a phase bin around a phase 'p' will be defined:
+        Width of phase bins, such that a phase bin around a phase `p` will be defined:
 
             p - (width / 2) < phases < p + (width / 2)
 
@@ -263,7 +263,7 @@ def phase_average(
     phase_averaged_spec: list of np.ndarray (or None)
         List of phase-averaged spectra, one per phase bin.
         If no spectra were found in a given phase bin, a warning will be given,
-        and'None' will be returned instead.
+        and `None` will be returned instead.
 
     """
     errors = check_spectra(spec)
@@ -295,6 +295,7 @@ def phase_average(
 
     out = [None] * len(phase_bins)
     phases_mod = phases % 1  # ensure phases clipped to 0 - 1 range
+    #phases_out = [None] * len(phase_bins)
 
     for i, (lower, upper) in enumerate(phase_bins):
 
@@ -320,6 +321,9 @@ def phase_average(
             continue
 
         out[i] = average_spec(to_bin)
+        #median_phase = np.median(phases[sel])
+        #(phases[sel] - median_phase).mean() + median_phase
+        #phases_out[i] = phases_mod[sel].mean()
 
     return out
 
