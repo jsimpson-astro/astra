@@ -242,8 +242,8 @@ def _spec_model(
 
     # flux = scaled_spec(interp_pars, radius, distance, interpolator)
     flux = specmodels.interpspec_flux_scaled(
-        np.array(),
-        np.array(),
+        np.array([]),
+        np.array([]),
         interpolator,
         interp_pars,
         radius,
