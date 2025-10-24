@@ -636,7 +636,7 @@ def interpspec_flux_scaled(
     scaled to a star with radius `radius` (in Rsun) and distance `distance` (in pc).
     """
     model = interpspec(wvs, flux, interp, pars)
-    model = _cen_scale(model, radius, distance)
+    model = _flux_scale(model, radius, distance)
     return model
 
 
