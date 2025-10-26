@@ -200,17 +200,8 @@ def optsub(
 
 #### MCMC spectrum fitting ####
 
-
-# _bg_models = {
-#     'flat': bg_flat, 
-#     'bb': bg_blackbody, 
-#     'bbscaled': bg_blackbody_scaled, 
-#     'power': bg_powerlaw,
-#     'powerscaled': bg_powerlaw_scaled,
-#     'one': bg_ones
-# }
-
-_bg_models = {}
+_bg_models = {model: getattr(specmodels, model) for model in specmodels.ALL_MODELS}
+BG_MODELS = _bg_models.copy()
 
 def _spec_model(
     pars: dict[str, float],
@@ -259,7 +250,54 @@ def _spec_model(
 
 class SpectrumFitter:
     """
-    
+    Fit a spectrum with a model consisting of an interpolated and background spectrum.
+    Uses emcee.EnsembleSampler for MCMC sampling.
+    Supports priors distributions using prior classes provided by astra.
+
+    Parameters:
+    param_config: dict of str: float, None or a prior/list of priors
+        Configuration for fit parameters.
+        Must have a key for all fit parameters.
+        This includes `radius`, `distance` (for the flux-scaled interpolated model)
+        and `fstar`, the fraction of stellar light.
+        This also includes all parameters of `interpolator` (interpolator.param_names),
+        and all parameters of `bg_model`, as given as keys of `bg_param_map`.
+        Every value must be either None, float, or a prior/list of priors, where:
+            - None indicates the parameter is unbound and will be fit
+            - float indicates the parameter will be fixed to this value and not fit
+            - A prior or list of priors will constrain the parameter appropriately
+            Note that parameters of the interpolator will be automatically bounded to their
+            maximum ranges using a UniformPrior if they are left unconstrained.
+    interpolator: an astra.specfitting.SpectrumInterpolator instance
+        The interpolator instance used for fitting the model.
+        The interpolator must have its param_names specified.
+    bg_model: str or callable, optional
+        Background model, applied with proportion (1 - fstar).
+        Can be specified with either a string (referencing a model in astra.specfitting.specmodels)
+        or a callable which accepts wavelengths, fluxes as the first two arguments.
+        If not given, a background of 0 is used (in which case, fstar should be fixed to 1).
+    bg_param_map: dict of str: str, optional
+        dict mapping param_config constraints onto the provided `bg_model`.
+        This allows flexibility and prevents parameter name conflicts.
+        E.g. if `bg_model` is a function blackbody(wvs, flux, teff), you could have
+        `teff_bb` in your param_config, and set `bg_param_map` to be {`teff_bb`: `teff`}.
+    nwalkers: int, default 16
+        Number of walkers for MCMC ensemble (AIES) sampling.
+
+    Methods:
+    initialise(self, spectrum, init_config, mask=None)
+        Initialise the fitter with a spectrum to fit to, and configure the starting conditions
+        for the walkers with `init_config`. An optional mask may be provided.
+        `init_config` must be a dict of str: tuple(float, float), with keys for each fit parameter.
+        Each tuple specifies the central value (first value) and scatter size (second value)
+        for initialising the walkers.
+
+    run(self, nsteps, continue_=True, progress=True, spectrum=None, init_config=None, mask=None)
+        Run the sampling process for `nsteps` number of steps.
+        Will continue from an existing run if continue_ is not set to False.
+        The spectrum, init_config, and mask may be set (or overridden) here.
+        Set progress=False to disable the tqdm progress bar.
+
     """
 
     _non_interp_keys = {'radius', 'distance', 'fstar'}
@@ -278,7 +316,10 @@ class SpectrumFitter:
         # verify and set background model
         if isinstance(bg_model, str):
             if bg_model not in _bg_models:
-                raise ValueError(f"Invalid choice for background model: {bg_model}. Valid choices are {list(_bg_models.keys())}.")
+                raise ValueError(
+                    f"Invalid choice for background model: {bg_model}. "
+                    f"Valid choices are {list(_bg_models.keys())}."
+                )
             bg_func = _bg_models[bg_model]
         elif callable(bg_model):
             bg_func = bg_model
@@ -308,6 +349,20 @@ class SpectrumFitter:
         self._sort_priors()
 
         self._nwalkers = int(nwalkers)
+
+        scatter_method = kwargs.get('scatter_method', 'normal')
+
+        if isinstance(scatter_method, str):
+            if scatter_method not in self._scatter_methods:
+                raise ValueError(
+                    f"Invalid choice for scatter_method: {scatter_method}. "
+                    f"Valid options are {list(self._scatter_methods.keys())}."
+                )
+            self._scatter_method = self._scatter_methods[scatter_method]
+        elif callable(scatter_method):
+            self._scatter_method = scatter_method
+        else:
+            raise TypeError(f"Invalid type for scatter_method: {type(scatter_method)}")
 
         if 'pool' in kwargs:
             raise NotImplementedError("Multiprocessing not currently implemented.")
@@ -351,7 +406,7 @@ class SpectrumFitter:
                     param_config_full[par] = res
                     continue
                 else:
-                    raise TypeError(f"Config for parameter {par} contains mixed constraints, must contain only instances of UniformPrior and GaussianPrior.")
+                    raise TypeError(f"Config for parameter {par} contains mixed constraints, must contain only instances of priors.")
             elif isinstance(res, BasePrior):
                 param_config_full[par] = [res]
                 continue
@@ -459,7 +514,6 @@ class SpectrumFitter:
         """
 
         # first go through uniform priors
-        # this should be faster than a for loop
         uniform_priors = [prior.eval(param_dict[par]) for par, priors in self._uniform_priors.items() for prior in priors]
 
         if any(p == -np.inf for p in uniform_priors):
@@ -604,26 +658,40 @@ class SpectrumFitter:
 
         self._init_config = init_config_cons
 
-    def _create_init_samples(self, init_config, method='normal'):
+    def _create_init_samples(self, init_config):
         """
         Create samples from normal distribution using init_config
         """
 
-        if method not in self._scatter_methods.keys():
-            raise ValueError(f"Invalid choice for method: {method}. Valid options are {list(self._scatter_methods.keys())}.")
-
-        scatter_method = self._scatter_methods[method]
-
         init_means = np.array([init_config[p][0] for p in self.fit_pars])
         init_sigmas = np.array([init_config[p][1] for p in self.fit_pars])
 
+        scatter_method = self.scatter_method
         init_samples = init_means + init_sigmas * scatter_method(size=(self.nwalkers, self.ndims))
 
         return init_samples
 
-    def initialise(self, spectrum, init_config, mask=None):
+    def initialise(
+        self,
+        spectrum: np.ndarray[float],
+        init_config: dict[str, tuple[float, float]],
+        mask: np.ndarray[bool] | None = None
+    ):
         """
-        Initialise sampler with spectrum and prepare initial samples
+        Initialise the fitter with a spectrum to fit to, and configure the starting conditions
+        for the walkers with `init_config`. An optional mask may be provided.
+
+        Parameters:
+        spectrum: np.ndarray[float]
+            A spectrum with 3 columns: wavelength, flux, flux errors.
+            Must have the same wavelengths as `self.interpolator`.
+        init_config: dict of str: tuple[float, float]
+            Configuration for scattering the initial state of the MCMC walkers.
+            Must contain a key for each fit (i.e. not fixed) parameter.
+            Each tuple is a pair of (central value, scatter size).
+            Walkers are scattered according to self.scatter_method (default: np.random.normal).
+        mask: np.ndarray[bool], optional
+            Boolean mask for spectrum, ranges set to False are ignored in fitting.
         """
 
         # overwrite check here?
@@ -631,6 +699,7 @@ class SpectrumFitter:
         # verify spectrum, sets self.spectrum
         self._verify_spectrum(spectrum)
 
+        # verify mask, sets self.mask
         self._verify_mask(mask)
 
         self._init_sampler(spectrum[:, 1], spectrum[:, 2])
@@ -658,9 +727,24 @@ class SpectrumFitter:
 
         self._nsteps = self._nsteps + int(nsteps)
 
-    def run(self, nsteps, continue_=True, progress=True, spectrum=None, mask=None, init_config=None):
+    def run(
+        self,
+        nsteps: int,
+        continue_: bool = True,
+        progress: bool = True,
+        spectrum: np.ndarray[float] | None = None,
+        init_config: dict[str, tuple[float, float]] | None = None,
+        mask: np.ndarray[bool] | None = None
+    ):
         """
-        Run MCMC sampling
+        Run the sampling process for `nsteps` number of steps.
+        Will continue from any previous runs unless continue_ = False (default True).
+        Set progress=False to disable the tqdm progress bar.
+
+        The spectrum, init_config, and mask may be set (or overridden) here.
+        Both `spectrum` and `init_config` must have been set previously to start a run.
+        See SpectrumFitter.initialise for more information on these parameters.
+
         """
 
         # raise error if not initialised before run
@@ -747,6 +831,10 @@ class SpectrumFitter:
     @property
     def bg_model(self):
         return self._bg_model
+
+    @property
+    def scatter_method(self):
+        return self._scatter_method
 
     @property
     def sampler(self):
