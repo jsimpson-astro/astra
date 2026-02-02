@@ -133,10 +133,10 @@ def ew(
         if isinstance(continuum, np.ndarray):
             # normalise, then zero spectra
             s_norm[:, 1] = s_norm[:, 1] / continuum - 1
-            s_norm[:, 2] = s_norm[:, 2] / continuum - 1
+            s_norm[:, 2] = s_norm[:, 2] / continuum
         else:
             s_norm[:, 1] = s_norm[:, 1] - continuum
-            s_norm[:, 2] = s_norm[:, 2] - continuum
+            s_norm[:, 2] = s_norm[:, 2]
 
         # measure ews
         ew, ew_error = ew_compute(s_norm, s_mask_)
