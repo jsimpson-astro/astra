@@ -37,7 +37,7 @@ def ew_compute(
     dws = np.zeros_like(wvs)
     dws[:-1] = wvs[1:] - wvs[:-1]
     # extrapolate for final value
-    dws[-1] = dws[-1] + (dws[-1] - dws[-2])
+    dws[-1] = dws[-2] + (dws[-2] - dws[-3])
 
     # subtracting continuum would go here
     ew = (dws[mask_] * flux[mask_]).sum()
