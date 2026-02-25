@@ -707,7 +707,7 @@ class SpectrumFitter:
         # verify init_config, sets self.init_config
         self._verify_init_config(init_config)
 
-        # create intial samples from init config
+        # create initial samples from init config
         init_samples = self._create_init_samples(self.init_config)
         self._init_samples = init_samples
 
