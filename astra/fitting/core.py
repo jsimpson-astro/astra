@@ -1,5 +1,6 @@
 from typing import TypeAlias
 import numpy as np
+from scipy.stats.distributions import truncnorm
 
 class BasePrior:
     def __init__(self):
@@ -151,6 +152,125 @@ class GaussianPrior(BasePrior):
     @property
     def bounded(self):
         return False
+
+
+class TruncnormPrior(GaussianPrior):
+    """
+    Truncated gaussian prior for SpectrumFitter.
+    Requires two parameters: the mean and standard deviation of the Gaussian.
+    """
+
+    def __init__(self, mean, sigma, trunc=5., trunc_lower=None, trunc_upper=None):
+        if sigma <= 0:
+            raise ValueError("sigma must be positive and non-zero.")
+
+        if trunc <= 0:
+            raise ValueError("trunc must be positive and non-zero.")
+
+        self._mean = mean
+        self._sigma = sigma
+
+        if (trunc_lower is None and trunc_upper is None):
+            self._trunc = trunc
+            trunc_lower = trunc_upper = trunc
+        elif trunc_lower == trunc_upper:
+            trunc = abs(trunc_upper)
+            self._trunc = trunc
+        else:
+            trunc_lower = trunc if trunc_lower is None else trunc_lower
+            trunc_upper = trunc if trunc_lower is None else trunc_upper
+            self._trunc = (trunc_lower, trunc_upper)
+
+        self._lower = mean - trunc_lower * sigma
+        self._upper = mean + trunc_upper * sigma
+
+        self._trunc_lower = trunc_lower
+        self._trunc_upper = trunc_upper
+
+    def eval(self, p):
+        """
+        Evaluate prior probability
+        """
+        prob = truncnorm.pdf(
+            p, loc=self.mean, scale=self.sigma,
+            a=-self.trunc_lower, b=self.trunc_upper
+        )
+
+        return prob
+
+    def sample(self, size=1):
+        """
+        Sample randomly from distribution
+        """
+        samples = truncnorm.rvs(
+            size=size, loc=self.mean, scale=self.sigma,
+            a=-self.trunc_lower, b=self.trunc_upper
+        )
+
+        return samples
+
+    def transform(self, u):
+        """
+        Transform from u in the interval [0, 1) to real values
+        """
+        x = truncnorm.ppf(
+            u, loc=self.mean, scale=self.sigma,
+            a=-self.trunc_lower, b=self.trunc_upper
+        )
+
+        return x
+
+    def __repr__(self):
+        if self.trunc_lower == self.trunc_upper:
+            repr_ = f"TruncnormPrior({self.mean}, {self.sigma}, {self.trunc})"
+        else:
+            repr_ = (
+                f"TruncnormPrior({self.mean}, {self.sigma}, "
+                f"{self.trunc_lower}, {self.trunc_upper})"
+            )
+        return repr_
+
+    def __str__(self):
+        if self.trunc_lower == self.trunc_upper:
+            str_ = f"TruncnormPrior(mean={self.mean}, sigma={self.sigma}, trunc={self.trunc})"
+        else:
+            str_ = (
+                f"TruncnormPrior(mean={self.mean}, sigma={self.sigma}, "
+                f"trunc_lower={self.trunc_lower}, trunc_upper={self.trunc_upper})"
+            )
+        return str_
+
+    @property
+    def mean(self):
+        return self._mean
+
+    @property
+    def sigma(self):
+        return self._sigma
+
+    @property
+    def trunc(self):
+        return self._trunc
+
+    @property
+    def trunc_lower(self):
+        return self._trunc_lower
+
+    @property
+    def trunc_upper(self):
+        return self._trunc_upper
+
+    @property
+    def lower(self):
+        return self._lower
+
+    @property
+    def upper(self):
+        return self._upper
+
+    @property
+    def bounded(self):
+        return True if np.isfinite(self.lower) and np.isfinite(self.upper) else False
 
 
 # typing for prior classes
