@@ -137,6 +137,8 @@ class SpectrumFitter:
         nwalkers: int = 16,
         **kwargs
     ):
+        # set model
+        self._model = _spec_model
 
         # verify and set background model
         if isinstance(bg_model, str):
@@ -365,7 +367,7 @@ class SpectrumFitter:
             mask = cls.mask
             # interp_pars = {k: param_dict[k] for k in cls.interpolator.param_names}
 
-            model = _spec_model(
+            model = self._model(
                 pars=param_dict,
                 interpolator=cls.interpolator,
                 bg=cls.bg_model,
@@ -763,6 +765,8 @@ class LinkedSpectrumFitter:
         #param_config_interp = {p: v for p, v in param_config.items() if p not in self._non_interp_keys}
         #bg_pars = {bg_par_map[p]: pars[p] for p in bg_par_map}
         #radius, distance = pars['radius'], pars['distance']
+
+        self._model = _spec_model
 
         # flag that will prevent running until a valid param config is set
         # allows interpolator, bg model, etc. to be changed without
@@ -1611,7 +1615,7 @@ class LinkedSpectrumFitter:
             #     return -np.inf
 
             models = [
-                _spec_model(
+                self._model(
                     pars=param_dict,
                     interpolator=interpolator,
                     bg=bg_model,
