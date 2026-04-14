@@ -10,10 +10,12 @@ __all__ = [
 ]
 
 # version
-import importlib.metadata
-__version__ = importlib.metadata.version(__package__ or __name__)
-# clean up namespace
-del importlib.metadata
+from importlib import metadata
+
+try:
+    __version__ = metadata.version(__package__ or __name__)
+except metadata.PackageNotFoundError:
+    __version__ = "unknown"
 
 # astropy import style
 def __getattr__(attr):
