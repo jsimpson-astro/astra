@@ -28,24 +28,3 @@ def __getattr__(attr):
 # redefine dir
 def __dir__():
     return sorted(set(globals()).union(__all__))
-
-
-from types import ModuleType as __module_type__
-
-# clean up top-level namespace
-# delete everything not in __all__
-# or is a built-in attribute
-# or that isn't a submodule of this package
-for varname in dir():
-    if not (
-        (varname.startswith('__') and varname.endswith('__'))
-        or varname in __all__
-        or (
-            varname[0] != '_'
-            and isinstance(locals()[varname], __module_type__)
-            and locals()[varname].__name__.startswith(__name__ + '.')
-        )
-    ):
-        del locals()[varname]
-
-del varname, __module_type__
